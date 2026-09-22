@@ -48,6 +48,15 @@ target language → one-line correction. Fully generic (any native → any targe
   `message_end` to `~/.pi/agent/language-coach-log.jsonl` (ts, native,
   target, line) for progress tracking; overlay review instructions read
   the log + Engram history. tsc exit 0. Requires /reload.
+- v4: split corrections vs translations — markers `> 🎓` (correction) and
+  `> 🌐` (translation), `kind` field in log entries. tsc exit 0.
+- v5: project moved to dedicated git repo `~/projects/language-coach`
+  (extension/, skills/, docs/odd/, README); symlinks from
+  `~/.pi/agent/extensions` and `~/.pi/agent/skills`; data files stay in
+  `~/.pi/agent`. Initial commit: `6f0ca31`.
+
+## Commits
+- `6f0ca31` feat: initial language-coach extension and interview skill
 
 ## Notes
 - Work lives under `~/.pi/agent` (not a git repo) → no work-unit commits;

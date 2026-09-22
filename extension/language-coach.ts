@@ -67,7 +67,8 @@ function applyStatus(ctx: ExtensionContext, config: CoachConfig | null): void {
 }
 
 function coachLineFrom(text: string): { line: string; kind: "correction" | "translation" | "unmarked" } | null {
-	const firstLine = text.split("\n", 1)[0]?.trim() ?? "";
+	const lines = text.split("\n").map((l) => l.trim());
+	const firstLine = lines.find((l) => l.length > 0) ?? "";
 	if (!firstLine) return null;
 	if (firstLine.startsWith("> 🎓")) return { line: firstLine, kind: "correction" };
 	if (firstLine.startsWith("> 🌐")) return { line: firstLine, kind: "translation" };
