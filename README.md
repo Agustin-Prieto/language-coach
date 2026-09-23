@@ -35,6 +35,15 @@ Data files live in `~/.pi/agent` (environment, not source):
 
 Ask the assistant for a "progress review": it reads recent `language-coach-log.jsonl` entries plus the Engram mistake history (`topic_key: language-mistakes-<target>`) and summarizes recurring mistakes, weekly volume, improvements, and focus points.
 
+## Optional: coach block color
+
+The TUI renders the coach block as a blockquote, so its color is theme-driven (`mdQuote` / `mdQuoteBorder` tokens). Example override — copy your current theme to `~/.pi/agent/themes/` and set both tokens to a distinct color (e.g. `"214"` amber):
+
+```json
+"mdQuote": "214",
+"mdQuoteBorder": "214"
+```
+
 ## Development
 
 - Type check: `npx --yes -p typescript@5 tsc -p <tsconfig>` (strict, es2022, nodenext, types mapped to the pi package).

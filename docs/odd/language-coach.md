@@ -64,6 +64,10 @@ target language → one-line correction. Fully generic (any native → any targe
   the coach section from the response; logging captures the full block
   (verified against correction/translation/unmarked shapes). tsc exit 0.
 
+- v8 (display): custom theme `~/.pi/agent/themes/Language-Coach.json`
+  (Gentleman-Cute copy) with mdQuote/mdQuoteBorder set to amber 214 so the
+  coach blockquote renders in a distinct color. Selected via /theme.
+
 ## Commits
 - `6f0ca31` feat: initial language-coach extension and interview skill
 - `4067ac0` fix: detect coach block across message block arrays
