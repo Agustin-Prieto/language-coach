@@ -43,12 +43,11 @@ function buildOverlay(config: CoachConfig): string {
 	const lines = [
 		`## Language Coach (native: ${native} → target: ${target})`,
 		`The user is a native ${native} speaker practicing professional ${target} for software engineering work.`,
-		`- Coach lines: every translation or correction line MUST be the first line of the reply, rendered as its own blockquote block exactly in this shape: > 🎓 "..." for corrections of ${target} input, or > 🌐 "..." for translations of ${native} input — followed by a blank line before the rest of the reply. Never put anything else inside that block.`,
-		`- If the user writes in ${native}: the coach block starts with > 🌐 and contains the user's intent translated to natural, professional ${target} as used by software engineers. This line is an explicit exception to any reply-language rule. Never translate word-by-word. Then continue the reply in ${native}.`,
-		`- If the user writes in ${target}: if the message has grammar, word-choice, or phrasing errors, the coach block starts with > 🎓 and contains the corrected sentence with the corrected or changed words wrapped in **bold**, then continue the reply in ${target}. If it is correct but unnatural, the coach block says so briefly and gives at most one more natural alternative, bolding the changed words. If it is already natural, do not invent corrections.`,
+		`- Coach block: START every reply with a blockquote block (consecutive lines starting with "> ") exactly in this shape, then a horizontal rule (---) on its own line, then a blank line, then the main response:\n  > 🎓 "the user's original message, verbatim, natural-language part only (skip code, commands, paths, logs)"\n  >\n  > ✏️ "the corrected sentence in ${target}, with the changed words wrapped in **bold**"\n  For ${native}-language input, use > 🌐 on the first line and put the natural, professional ${target} translation on the ✏️ line instead of a correction. The coach block is an explicit exception to any reply-language rule. Never translate word-by-word.`,
+		`- If the user's ${target} message is already natural: keep the 🎓 echo line, and on the ✏️ line say it is correct and optionally give at most one more natural alternative, bolding the changed words. If no alternative adds value, say so briefly. Do not invent corrections.`,
 		`- If the user writes in any other language: reply in that language; no coaching.`,
 		`- Never translate or rewrite code, commands, identifiers, logs, file paths, commit messages, or delegated artifacts.`,
-		`- Coaching is one coach block max; never let it delay or reshape the technical task.`,
+		`- Coaching is one coach block max; never let it delay or reshape the technical task. The echo line quotes the user's own words; never quote code or file paths in it.`,
 		`- On noticing a recurring mistake, save one short line with mem_save (type "preference", topic_key "language-mistakes-${targetLower}").`,
 		`- When the user asks for a review or progress report: read the recent entries in ${LOG_PATH} and search memories with that topic_key, then summarize compactly: recurring mistakes, weekly correction volume, what improved, and 2-3 focus points for the coming period.`,
 	];
@@ -66,14 +65,24 @@ function applyStatus(ctx: ExtensionContext, config: CoachConfig | null): void {
 	}
 }
 
-function coachLineFrom(text: string): { line: string; kind: "correction" | "translation" | "unmarked" } | null {
+function coachBlockFrom(text: string): { block: string; kind: "correction" | "translation" | "unmarked" } | null {
 	const lines = text.split("\n").map((l) => l.trim());
-	const firstLine = lines.find((l) => l.length > 0) ?? "";
-	if (!firstLine) return null;
-	if (firstLine.startsWith("> 🎓")) return { line: firstLine, kind: "correction" };
-	if (firstLine.startsWith("> 🌐")) return { line: firstLine, kind: "translation" };
-	if (firstLine.startsWith('"')) return { line: firstLine, kind: "unmarked" }; // fallback when the marker is missing
-	return null;
+	const start = lines.findIndex((l) => l.length > 0);
+	if (start === -1) return null;
+	const firstLine = lines[start];
+	let kind: "correction" | "translation" | "unmarked" | null = null;
+	if (firstLine.startsWith("> 🎓")) kind = "correction";
+	else if (firstLine.startsWith("> 🌐")) kind = "translation";
+	else if (firstLine.startsWith('"')) kind = "unmarked"; // fallback when the marker is missing
+	if (!kind) return null;
+	const blockLines = [firstLine];
+	if (kind !== "unmarked") {
+		for (let i = start + 1; i < lines.length; i++) {
+			if (!lines[i].startsWith(">")) break;
+			blockLines.push(lines[i]);
+		}
+	}
+	return { block: blockLines.join("\n"), kind };
 }
 
 function textFromContent(content: unknown): string {
@@ -86,9 +95,9 @@ function textFromContent(content: unknown): string {
 	return "";
 }
 
-function appendLog(config: CoachConfig, line: string, kind: "correction" | "translation" | "unmarked"): void {
+function appendLog(config: CoachConfig, block: string, kind: "correction" | "translation" | "unmarked"): void {
 	try {
-		const entry = { ts: new Date().toISOString(), kind, native: config.nativeLanguage, target: config.targetLanguage, line };
+		const entry = { ts: new Date().toISOString(), kind, native: config.nativeLanguage, target: config.targetLanguage, line: block };
 		appendFileSync(LOG_PATH, `${JSON.stringify(entry)}\n`, "utf8");
 	} catch {
 		// Logging must never break the session.
@@ -112,8 +121,8 @@ export default function (pi: ExtensionAPI) {
 		if (event.message.role !== "assistant") return;
 		const config = loadConfig();
 		if (!config || config.mode === "off") return;
-		const coach = coachLineFrom(textFromContent(event.message.content));
-		if (coach) appendLog(config, coach.line, coach.kind);
+		const coach = coachBlockFrom(textFromContent(event.message.content));
+		if (coach) appendLog(config, coach.block, coach.kind);
 	});
 
 	pi.registerCommand("language", {

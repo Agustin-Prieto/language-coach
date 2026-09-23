@@ -50,13 +50,23 @@ target language → one-line correction. Fully generic (any native → any targe
   the log + Engram history. tsc exit 0. Requires /reload.
 - v4: split corrections vs translations — markers `> 🎓` (correction) and
   `> 🌐` (translation), `kind` field in log entries. tsc exit 0.
+- v6: fixed coach detection — assistant content is a block array (thinking +
+  text), extracted text can start with blank lines; detection now skips them.
+  Diagnosed with temporary message_end instrumentation; first real log entry
+  confirmed. Diagnostics removed. Commit `4067ac0`.
 - v5: project moved to dedicated git repo `~/projects/language-coach`
   (extension/, skills/, docs/odd/, README); symlinks from
   `~/.pi/agent/extensions` and `~/.pi/agent/skills`; data files stay in
   `~/.pi/agent`. Initial commit: `6f0ca31`.
 
+- v7: coach block echoes the user's original message (natural-language part)
+  above the correction/translation ✏️ line; `---` horizontal rule separates
+  the coach section from the response; logging captures the full block
+  (verified against correction/translation/unmarked shapes). tsc exit 0.
+
 ## Commits
 - `6f0ca31` feat: initial language-coach extension and interview skill
+- `4067ac0` fix: detect coach block across message block arrays
 
 ## Notes
 - Work lives under `~/.pi/agent` (not a git repo) → no work-unit commits;

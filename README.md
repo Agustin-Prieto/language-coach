@@ -5,8 +5,7 @@ A generic, lightweight language-learning coach for [Pi](https://github.com/badlo
 ## How it works
 
 - **Extension** (`extension/language-coach.ts`): injects a ~200-token, prompt-cache-stable overlay into the system prompt via `before_agent_start`. The model then:
-  - Translates the user's intent when they write in their native language (coach block `> 🌐 "..."`).
-  - Corrects grammar, word choice, and phrasing when they write in the target language (coach block `> 🎓 "..."`, changed words in **bold**).
+  - Coach block at the top of every reply: echo of the user's original message, then the correction (`> 🎓`) or translation (`> 🌐`) on a ✏️ line, then a `---` rule separating the coach section from the answer.
   - Logs every coach block mechanically (zero model cost) for progress tracking.
 - **Skill** (`skills/language-interview/`): on-demand mock technical interviews in the target language (progressive disclosure).
 
