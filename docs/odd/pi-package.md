@@ -22,8 +22,20 @@ system.
 - [x] T4 — Switch installation (pi install, remove symlinks, verify load).
 
 ## Evidence
-- (pending)
+- `pi install /home/ubuntu/projects/language-coach` → registered in
+  `~/.pi/agent/settings.json` packages as `../../projects/language-coach`;
+  `pi list` shows it as a user package.
+- Old symlinks removed (`~/.pi/agent/extensions/language-coach.ts`,
+  `~/.pi/agent/skills/language-interview`); `pi list` shows exactly one load
+  path, so no double overlay.
+- End-to-end: headless `pi -p "hello"` from `/tmp` → reply starts with the
+  `> 🎓` coach block (overlay injected via the package load).
+- Commit `9f6c08f` (manifest + rename + README + this record).
 
 ## Notes
 - The running session still uses the old symlink-loaded extension until the
   next pi start; verify the package load then.
+- Verified 2026-09-24: package load confirmed in a fresh headless session.
+- `private: true` prevents accidental npm publish; remove when the publish
+  decision is made. Publishing would also warrant a LICENSE file and a
+  versioned release flow.
