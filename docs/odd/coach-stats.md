@@ -35,10 +35,21 @@ corrections from the existing coach log.
 - [x] T1 — Extract `aggregateStats(entries)` pure logic + `/language stats` subcommand in `extension/language-coach.ts` (implemented, uncommitted)
 - [x] T2 — README documentation for the new subcommand (implemented, uncommitted)
 - [x] T3 — Verify against real log data via `gentle-ai-verify` (passed: no defects; 25-entry real log, 18 command-safety scenarios, regressions clean)
-- [x] T4 — Work-unit commit on `feat/coach-stats-dashboard` (80ffd35); merge to `main` is a user decision
+- [x] T4 — Work-unit commits on `feat/coach-stats-dashboard` (80ffd35, 196b9ec); merge to `main` is a user decision
 
 ## Outcome
-Implemented and verified on `feat/coach-stats-dashboard` (commit 80ffd35).
-Corrections extraction counts bold spans per entry; trend labels: improving /
-stable / rising. Review and merge to `main` pending user decision.
+Implemented, verified, and reviewed on `feat/coach-stats-dashboard`.
+Commits: 80ffd35 (feature), 196b9ec (this record).
+
+Native review: lineage `review-2c141a37c8c7d5f4`, medium tier, lens
+`review-reliability` — **approved** and acknowledged (authority burned).
+Three advisory, non-blocking findings, recorded as later work:
+- R3-001 `extension/language-coach.ts:148` (WARNING) — date parsing of log entries
+- R3-002 `extension/language-coach.ts:188` (WARNING) — week bucketing uses fixed
+  24h arithmetic, so boundaries and labels can drift across DST transitions
+- R3-003 `extension/language-coach.ts:312` (SUGGESTION) — JSONL parse failure path
+
+Merge to `main` remains a user decision under ordinary repository policy.
+Diff: extension/language-coach.ts (+183, aggregateStats/renderStats/stats branch),
+README.md, docs/odd/coach-stats.md.
 
