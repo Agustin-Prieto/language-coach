@@ -36,3 +36,12 @@ Address the three advisory findings from the native review of
 - Round-1 regression was an implementer error the verifier caught before
   commit — the "one extra weekStart" must extend the *end* of the window,
   not shift its start.
+
+## Native review
+- Lineage `review-d14503562331976b`, medium tier, lens `review-reliability`,
+  candidate `e44ebfcd5e70a67f1bf1e25e3e2dafa667646ea7..61489833f7b16fd05ad8535ceb5ce845961835cb`
+  (committed range, 2 files, 71 lines) — **approved**, acknowledged,
+  authority burned (`gentle-ai.review-acknowledged/v1`).
+- Three advisory SUGGESTION findings (informational, non-blocking): strict
+  regex hardening at :148-151, weekStarts construction comment at :173-186,
+  skipped-counter rendering at :335-344. Recorded as possible later polish.
