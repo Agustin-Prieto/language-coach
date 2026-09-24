@@ -104,6 +104,143 @@ function appendLog(config: CoachConfig, block: string, kind: "correction" | "tra
 	}
 }
 
+interface LogEntry {
+	ts: string;
+	kind: "correction" | "translation" | "unmarked";
+	native: string;
+	target: string;
+	line: string;
+}
+
+interface WeekBucket {
+	label: string;
+	corrections: number;
+}
+
+interface StatsSummary {
+	total: number;
+	kinds: Record<"correction" | "translation" | "unmarked", number>;
+	weeks: WeekBucket[];
+	trend: "improving" | "stable" | "rising";
+	topCorrections: Array<{ span: string; count: number }>;
+	recent: Array<{ kind: string; when: string; line: string }>;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function startOfWeek(date: Date): Date {
+	// Monday-based ISO week start, local time.
+	const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+	d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+	return d;
+}
+
+function formatDate(d: Date): string {
+	return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+
+function formatDayTime(d: Date): string {
+	const hh = String(d.getHours()).padStart(2, "0");
+	const mm = String(d.getMinutes()).padStart(2, "0");
+	return `${formatDate(d)} ${hh}:${mm}`;
+}
+
+function parseLogDate(ts: string): Date | null {
+	const d = new Date(ts);
+	return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function toOneLine(text: string, max = 80): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+function extractBoldSpans(line: string): string[] {
+	const spans: string[] = [];
+	const re = /\*\*([^*]+)\*\*/g;
+	let match: RegExpExecArray | null;
+	while ((match = re.exec(line)) !== null) spans.push(match[1].toLowerCase());
+	return spans;
+}
+
+export function aggregateStats(entries: LogEntry[]): StatsSummary {
+	const kinds = { correction: 0, translation: 0, unmarked: 0 };
+	const currentWeekStart = startOfWeek(new Date());
+	const weekStarts: Date[] = [];
+	for (let i = 3; i >= 0; i--) {
+		const ws = new Date(currentWeekStart);
+		ws.setDate(ws.getDate() - 7 * i);
+		weekStarts.push(ws);
+	}
+	const weeks: WeekBucket[] = weekStarts.map((ws) => {
+		const we = new Date(ws.getTime() + 6 * 24 * 60 * 60 * 1000);
+		return { label: `${formatDate(ws)}–${formatDate(we)}`, corrections: 0 };
+	});
+
+	const spanCounts = new Map<string, number>();
+	for (const entry of entries) {
+		kinds[entry.kind]++;
+		if (entry.kind !== "correction") continue;
+		const date = parseLogDate(entry.ts);
+		if (date) {
+			const t = date.getTime();
+			for (let i = 0; i < weekStarts.length; i++) {
+				const start = weekStarts[i].getTime();
+				if (t >= start && t < start + WEEK_MS) {
+					weeks[i].corrections++;
+					break;
+				}
+			}
+		}
+		for (const span of extractBoldSpans(entry.line)) {
+			spanCounts.set(span, (spanCounts.get(span) ?? 0) + 1);
+		}
+	}
+
+	const [w0, w1, w2, current] = weeks.map((w) => w.corrections);
+	const avgPrevious = (w0 + w1 + w2) / 3;
+	let trend: "improving" | "stable" | "rising" = "stable";
+	if (avgPrevious > 0) {
+		if (current < 0.7 * avgPrevious) trend = "improving";
+		else if (current > 1.3 * avgPrevious) trend = "rising";
+	} else if (current > 0) {
+		trend = "rising";
+	}
+
+	const topCorrections = [...spanCounts.entries()]
+		.sort((a, b) => b[1] - a[1])
+		.slice(0, 5)
+		.map(([span, count]) => ({ span, count }));
+
+	const recent = entries.slice(-5).map((e) => {
+		const date = parseLogDate(e.ts);
+		return { kind: e.kind, when: date ? formatDayTime(date) : "?", line: toOneLine(e.line) };
+	});
+
+	return { total: entries.length, kinds, weeks, trend, topCorrections, recent };
+}
+
+function renderStats(stats: StatsSummary): string {
+	const kindLine = `${stats.kinds.correction} corrections, ${stats.kinds.translation} translations, ${stats.kinds.unmarked} unmarked`;
+	const weeksLine = stats.weeks.map((w) => `${w.label}: ${w.corrections}`).join(" | ");
+	const avgPrevious = (stats.weeks[0].corrections + stats.weeks[1].corrections + stats.weeks[2].corrections) / 3;
+	const topLine = stats.topCorrections.length
+		? stats.topCorrections.map((t) => `"${t.span}" ×${t.count}`).join(", ")
+		: "none recorded";
+	const lines = [
+		`Language Coach stats — ${stats.total} blocks (${kindLine})`,
+		`Corrections by week: ${weeksLine}`,
+		`Trend: ${stats.trend} (this week ${stats.weeks[3].corrections} vs avg ${avgPrevious.toFixed(1)} of previous 3)`,
+		`Top corrections: ${topLine}`,
+	];
+	if (stats.recent.length > 0) {
+		lines.push("Recent:");
+		for (const r of stats.recent) lines.push(`  [${r.kind}] ${r.when} — ${r.line}`);
+	}
+	return lines.join("\n");
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		const config = loadConfig();
@@ -126,7 +263,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("language", {
-		description: "Language Coach: show status, run setup, or set mode (on | productivity | off)",
+		description: "Language Coach: show status, run setup, view stats, or set mode (on | productivity | off)",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim().toLowerCase();
 
@@ -152,6 +289,50 @@ export default function (pi: ExtensionAPI) {
 				saveConfig(created);
 				applyStatus(ctx, created);
 				ctx.ui.notify(`Language Coach configured: ${created.nativeLanguage} → ${created.targetLanguage} (mode: on)`, "info");
+				return;
+			}
+
+			if (trimmed === "stats") {
+				const config = loadConfig();
+				if (!config) {
+					ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
+					return;
+				}
+				try {
+					const raw = existsSync(LOG_PATH) ? readFileSync(LOG_PATH, "utf8") : "";
+					if (!raw.trim()) {
+						ctx.ui.notify("No coaching data yet", "warning");
+						return;
+					}
+					const entries: LogEntry[] = [];
+					for (const line of raw.split("\n")) {
+						const t = line.trim();
+						if (!t) continue;
+						try {
+							const parsed = JSON.parse(t) as Record<string, unknown>;
+							if (
+								typeof parsed.ts === "string" &&
+								(parsed.kind === "correction" || parsed.kind === "translation" || parsed.kind === "unmarked") &&
+								typeof parsed.line === "string"
+							) {
+								entries.push({
+									ts: parsed.ts,
+									kind: parsed.kind,
+									native: typeof parsed.native === "string" ? parsed.native : "",
+									target: typeof parsed.target === "string" ? parsed.target : "",
+									line: parsed.line,
+								});
+							}
+						} catch {
+							// Skip malformed lines silently.
+						}
+					}
+					const summary = renderStats(aggregateStats(entries));
+					if (ctx.hasUI) ctx.ui.notify(summary, "info");
+					else console.log(summary);
+				} catch (error) {
+					ctx.ui.notify(`Language Coach: failed to compute stats (${String(error)})`, "warning");
+				}
 				return;
 			}
 

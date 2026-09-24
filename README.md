@@ -29,6 +29,7 @@ Data files live in `~/.pi/agent` (environment, not source):
 
 - `/language` — show status, or interactive setup if no config exists.
 - `/language on|productivity|off` — set mode (persisted). `off` injects nothing (zero cost).
+- `/language stats` — progress dashboard from the coach log: block counts by kind, corrections per week for the last 4 ISO weeks with a trend label (improving / stable / rising), top recurring corrections (the `**bold**` spans), and the last 5 blocks. Read-only; headless sessions print the summary to the console.
 - `/skill:language-interview [topic]` — start a mock interview.
 
 ## Progress review
