@@ -9,7 +9,7 @@ system.
 - Rename `extension/` -> `extensions/` (pi convention directory).
 - Add `package.json` with a `pi` manifest: extensions `./extensions`,
   skills `./skills`; `private: true` until an npm publish decision.
-- Install via `pi install /home/ubuntu/projects/language-coach` (local path:
+- Install via `pi install ~/projects/language-coach` (local path:
   added to settings without copying — dev loop unchanged).
 - Remove the old symlinks in `~/.pi/agent/extensions` and
   `~/.pi/agent/skills` after install to avoid double-loading the overlay.
@@ -22,7 +22,7 @@ system.
 - [x] T4 — Switch installation (pi install, remove symlinks, verify load).
 
 ## Evidence
-- `pi install /home/ubuntu/projects/language-coach` → registered in
+- `pi install ~/projects/language-coach` → registered in
   `~/.pi/agent/settings.json` packages as `../../projects/language-coach`;
   `pi list` shows it as a user package.
 - Old symlinks removed (`~/.pi/agent/extensions/language-coach.ts`,

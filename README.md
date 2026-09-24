@@ -16,8 +16,10 @@ The coach never applies to code, commands, commit messages, delegated subagent a
 Local development install (local paths are added to settings without copying, so edits take effect on the next pi start; `pi remove` / `pi config` manage it from there):
 
 ```bash
-pi install /home/ubuntu/projects/language-coach
+pi install ~/projects/language-coach
 ```
+
+(Adjust the path to wherever you cloned this repository.)
 
 If you previously used symlinks, remove them from `~/.pi/agent/extensions` and `~/.pi/agent/skills` after installing to avoid double-loading.
 
