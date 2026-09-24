@@ -30,7 +30,14 @@ targeted exercises.
   prepositions in/on, question word order, adjective/adverb), and produced
   exercise 1/5 in Spanish tempting exactly those mistakes. Score + summary
   flow deferred to interactive use by design.
-- Commits: (feature) + (this record).
+- Commits: `fdf0977` (feature) + (this record).
+
+## Native review
+- Lineage `review-eeb6dabc4d0e5bfe`, medium tier, lens `review-reliability`,
+  candidate `dc4491d..fdf0977` — **approved**, acknowledged, authority burned.
+- Advisory, non-blocking (possible later polish): max-count bounds wording
+  (SKILL.md:14), log-extraction determinism (:10), mem_save failover (:18),
+  overlay-suppression phrasing (:19).
 
 ## Notes
 - Skill loads on next pi start (package convention directory skills/).
