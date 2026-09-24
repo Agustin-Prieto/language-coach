@@ -8,6 +8,7 @@ A generic, lightweight language-learning coach for [Pi](https://github.com/badlo
   - Coach block at the top of every reply: echo of the user's original message, then the correction (`> 🎓`) or translation (`> 🌐`) on a ✏️ line, then a `---` rule separating the coach section from the answer.
   - Logs every coach block mechanically (zero model cost) for progress tracking.
 - **Skill** (`skills/language-interview/`): on-demand mock technical interviews in the target language (progressive disclosure).
+- **Skill** (`skills/language-drill/`): on-demand targeted drills built from the user's own recurring corrected mistakes (coach log + mistake history).
 
 The coach never applies to code, commands, commit messages, delegated subagent artifacts, or SDD files.
 
@@ -36,6 +37,7 @@ Data files live in `~/.pi/agent` (environment, not source) and are unaffected by
 - `/language on|productivity|off` — set mode (persisted). `off` injects nothing (zero cost).
 - `/language stats` — progress dashboard from the coach log: block counts by kind, corrections per week for the last 4 ISO weeks with a trend label (improving / stable / rising), top recurring corrections (the `**bold**` spans), and the last 5 blocks. Read-only; headless sessions print the summary to the console.
 - `/skill:language-interview [topic]` — start a mock interview.
+- `/skill:language-drill [count]` — targeted practice of your most frequent corrected mistakes (default 5 exercises).
 
 ## Progress review
 
