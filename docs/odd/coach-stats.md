@@ -34,6 +34,11 @@ corrections from the existing coach log.
 ## Tasks
 - [x] T1 — Extract `aggregateStats(entries)` pure logic + `/language stats` subcommand in `extension/language-coach.ts` (implemented, uncommitted)
 - [x] T2 — README documentation for the new subcommand (implemented, uncommitted)
-- [ ] T3 — Verify against real log data via `gentle-ai-verify`
-- [ ] T4 — Work-unit commits on `feat/coach-stats-dashboard`; merge to `main` by user decision
+- [x] T3 — Verify against real log data via `gentle-ai-verify` (passed: no defects; 25-entry real log, 18 command-safety scenarios, regressions clean)
+- [x] T4 — Work-unit commit on `feat/coach-stats-dashboard` (80ffd35); merge to `main` is a user decision
+
+## Outcome
+Implemented and verified on `feat/coach-stats-dashboard` (commit 80ffd35).
+Corrections extraction counts bold spans per entry; trend labels: improving /
+stable / rising. Review and merge to `main` pending user decision.
 
