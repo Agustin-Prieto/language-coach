@@ -32,6 +32,14 @@ system.
   `> 🎓` coach block (overlay injected via the package load).
 - Commit `9f6c08f` (manifest + rename + README + this record).
 
+## Native review
+- Lineage `review-1f8cdd18d4464503`, medium tier, lens `review-reliability`,
+  candidate `7fd2b81..98f9aff` (5 paths, 804 lines — rename counted as
+  delete+add) — **approved**, acknowledged, authority burned.
+- Advisory, non-blocking: R3-load-path (package.json manifest paths,
+  SUGGESTION), R3-ops-boundary (README install wording, WARNING,
+  informational), R3-verify-gap (docs, SUGGESTION). Possible later polish.
+
 ## Notes
 - The running session still uses the old symlink-loaded extension until the
   next pi start; verify the package load then.
