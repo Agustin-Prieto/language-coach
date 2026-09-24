@@ -127,8 +127,6 @@ interface StatsSummary {
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
 function startOfWeek(date: Date): Date {
 	// Monday-based ISO week start, local time.
 	const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -147,6 +145,10 @@ function formatDayTime(d: Date): string {
 }
 
 function parseLogDate(ts: string): Date | null {
+	// Log entries always write `new Date().toISOString()` (UTC ISO 8601).
+	// Parse strictly instead of trusting Date's lenient, implementation-defined
+	// fallbacks ("Sep 22 2026", "2026-09-22 19:01", etc.).
+	if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(ts)) return null;
 	const d = new Date(ts);
 	return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -168,13 +170,21 @@ export function aggregateStats(entries: LogEntry[]): StatsSummary {
 	const kinds = { correction: 0, translation: 0, unmarked: 0 };
 	const currentWeekStart = startOfWeek(new Date());
 	const weekStarts: Date[] = [];
+	// 4 displayed buckets [current-21d … current] plus one DST-safe upper
+	// bound for the current week (current+7d), used only as weekStarts[4].
+	// All boundaries built with setDate so they follow local-time rules;
+	// fixed WEEK_MS arithmetic is not, per review finding R3-002.
 	for (let i = 3; i >= 0; i--) {
 		const ws = new Date(currentWeekStart);
 		ws.setDate(ws.getDate() - 7 * i);
 		weekStarts.push(ws);
 	}
-	const weeks: WeekBucket[] = weekStarts.map((ws) => {
-		const we = new Date(ws.getTime() + 6 * 24 * 60 * 60 * 1000);
+	const currentWeekEnd = new Date(currentWeekStart);
+	currentWeekEnd.setDate(currentWeekEnd.getDate() + 7);
+	weekStarts.push(currentWeekEnd);
+	const weeks: WeekBucket[] = weekStarts.slice(0, 4).map((ws) => {
+		const we = new Date(ws);
+		we.setDate(we.getDate() + 6);
 		return { label: `${formatDate(ws)}–${formatDate(we)}`, corrections: 0 };
 	});
 
@@ -185,9 +195,8 @@ export function aggregateStats(entries: LogEntry[]): StatsSummary {
 		const date = parseLogDate(entry.ts);
 		if (date) {
 			const t = date.getTime();
-			for (let i = 0; i < weekStarts.length; i++) {
-				const start = weekStarts[i].getTime();
-				if (t >= start && t < start + WEEK_MS) {
+			for (let i = 0; i < 4; i++) {
+				if (t >= weekStarts[i].getTime() && t < weekStarts[i + 1].getTime()) {
 					weeks[i].corrections++;
 					break;
 				}
@@ -305,6 +314,7 @@ export default function (pi: ExtensionAPI) {
 						return;
 					}
 					const entries: LogEntry[] = [];
+					let skipped = 0;
 					for (const line of raw.split("\n")) {
 						const t = line.trim();
 						if (!t) continue;
@@ -322,12 +332,17 @@ export default function (pi: ExtensionAPI) {
 									target: typeof parsed.target === "string" ? parsed.target : "",
 									line: parsed.line,
 								});
+							} else {
+								skipped++;
 							}
 						} catch {
-							// Skip malformed lines silently.
+							// Malformed lines never break stats (R3-003), but they are counted
+							// so the summary can surface data-quality issues.
+							skipped++;
 						}
 					}
-					const summary = renderStats(aggregateStats(entries));
+					let summary = renderStats(aggregateStats(entries));
+					if (skipped > 0) summary += `\n⚠ Skipped ${skipped} malformed log line${skipped === 1 ? "" : "s"}`;
 					if (ctx.hasUI) ctx.ui.notify(summary, "info");
 					else console.log(summary);
 				} catch (error) {
