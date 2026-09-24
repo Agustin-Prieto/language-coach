@@ -4,7 +4,7 @@ A generic, lightweight language-learning coach for [Pi](https://github.com/badlo
 
 ## How it works
 
-- **Extension** (`extension/language-coach.ts`): injects a ~200-token, prompt-cache-stable overlay into the system prompt via `before_agent_start`. The model then:
+- **Extension** (`extensions/language-coach.ts`): injects a ~200-token, prompt-cache-stable overlay into the system prompt via `before_agent_start`. The model then:
   - Coach block at the top of every reply: echo of the user's original message, then the correction (`> 🎓`) or translation (`> 🌐`) on a ✏️ line, then a `---` rule separating the coach section from the answer.
   - Logs every coach block mechanically (zero model cost) for progress tracking.
 - **Skill** (`skills/language-interview/`): on-demand mock technical interviews in the target language (progressive disclosure).
@@ -13,12 +13,15 @@ The coach never applies to code, commands, commit messages, delegated subagent a
 
 ## Install
 
+Local development install (local paths are added to settings without copying, so edits take effect on the next pi start; `pi remove` / `pi config` manage it from there):
+
 ```bash
-ln -s ~/projects/language-coach/extension/language-coach.ts ~/.pi/agent/extensions/language-coach.ts
-ln -s ~/projects/language-coach/skills/language-interview ~/.pi/agent/skills/language-interview
+pi install /home/ubuntu/projects/language-coach
 ```
 
-Data files live in `~/.pi/agent` (environment, not source):
+If you previously used symlinks, remove them from `~/.pi/agent/extensions` and `~/.pi/agent/skills` after installing to avoid double-loading.
+
+Data files live in `~/.pi/agent` (environment, not source) and are unaffected by the install method:
 
 | File | Purpose |
 |---|---|

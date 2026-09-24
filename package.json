@@ -1,0 +1,12 @@
+{
+  "name": "language-coach",
+  "version": "0.1.0",
+  "description": "Lightweight always-on language-learning coach for Pi coding sessions: continuous corrections and translations in any language pair, plus mock interview and progress stats.",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "private": true,
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  }
+}
