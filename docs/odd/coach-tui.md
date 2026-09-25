@@ -176,4 +176,4 @@ Widget colors aligned with the card roles (first line `accent`, second
 - Translator root cause: the panel baked state into its Container once and
   never rebuilt it — completed translations never rendered. Fix: render()
   composes lines from live state.
-- Commit: (this feature commit).
+- Commit: `6e44710` (feature) + docs record.
