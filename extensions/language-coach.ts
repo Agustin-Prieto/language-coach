@@ -1,4 +1,6 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
+import { Container, Input, matchesKey, type OverlayOptions, Text } from "@earendil-works/pi-tui";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -415,10 +417,376 @@ function vocabSchedule(entries: VocabCapture[], reviews: VocabReview[], now: Dat
 	});
 }
 
+// ---------------------------------------------------------------------------
+// TUI widget (above the editor)
+// ---------------------------------------------------------------------------
+
+const WIDGET_ID = "language-coach";
+// Tracks whether the widget is currently rendered so mode=off clears it once.
+let widgetVisible = false;
+
+function countCorrectionsLast7d(entries: LogEntry[], now: Date): number {
+	const cutoff = now.getTime() - 7 * DAY_MS;
+	return entries.filter(
+		(e) => e.kind === "correction" && (parseLogDate(e.ts)?.getTime() ?? Number.NEGATIVE_INFINITY) >= cutoff,
+	).length;
+}
+
+function countDueVocab(now: Date): number {
+	try {
+		if (!existsSync(VOCAB_PATH)) return 0;
+		const captures = parseVocabEntries(readFileSync(VOCAB_PATH, "utf8"));
+		const reviews = existsSync(VOCAB_REVIEWS_PATH) ? parseVocabReviews(readFileSync(VOCAB_REVIEWS_PATH, "utf8")) : [];
+		return vocabSchedule(captures, reviews, now).filter((s) => s.due).length;
+	} catch {
+		// Vocab reads are best-effort for the widget; a failure just reports 0.
+		return 0;
+	}
+}
+
+function buildWidgetLines(): string[] {
+	const now = new Date();
+	const raw = existsSync(LOG_PATH) ? readFileSync(LOG_PATH, "utf8") : "";
+	const { entries } = parseLogEntries(raw);
+	const stats = aggregateStats(entries);
+	const lines = [
+		`Coach · corrections (7d): ${countCorrectionsLast7d(entries, now)} · trend: ${stats.trend} · vocab due: ${countDueVocab(now)}`,
+	];
+	const top = stats.topCorrections[0];
+	if (top) {
+		lines.push(`Top: "${toOneLine(top.span, 40)}" ×${top.count} · drill: /skill:language-drill`);
+	}
+	return lines;
+}
+
+function refreshWidget(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	try {
+		ctx.ui.setWidget(WIDGET_ID, buildWidgetLines());
+		widgetVisible = true;
+	} catch {
+		// Widget refresh must never break the session (read-only, zero model cost).
+	}
+}
+
+function clearWidget(ctx: ExtensionContext): void {
+	if (!ctx.hasUI || !widgetVisible) return;
+	try {
+		ctx.ui.setWidget(WIDGET_ID, undefined);
+	} catch {
+		// Clearing is best-effort; never break the session.
+	} finally {
+		widgetVisible = false;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard panel (overlay)
+// ---------------------------------------------------------------------------
+
+const PANEL_MAX_WIDTH = 48;
+
+interface PanelData {
+	stats: StatsSummary | null;
+	due: VocabStatus[];
+	dueTotal: number;
+}
+
+function loadPanelData(): PanelData {
+	const data: PanelData = { stats: null, due: [], dueTotal: 0 };
+	try {
+		if (existsSync(LOG_PATH)) {
+			const { entries } = parseLogEntries(readFileSync(LOG_PATH, "utf8"));
+			if (entries.length > 0) data.stats = aggregateStats(entries);
+		}
+	} catch {
+		// Stats load failure renders the panel's "no data yet" state.
+	}
+	try {
+		if (existsSync(VOCAB_PATH)) {
+			const captures = parseVocabEntries(readFileSync(VOCAB_PATH, "utf8"));
+			const reviews = existsSync(VOCAB_REVIEWS_PATH) ? parseVocabReviews(readFileSync(VOCAB_REVIEWS_PATH, "utf8")) : [];
+			const statuses = vocabSchedule(captures, reviews, new Date()).filter((s) => s.due);
+			data.dueTotal = statuses.length;
+			data.due = statuses.slice(0, 5);
+		}
+	} catch {
+		// Vocab load failure renders the panel's empty vocab section.
+	}
+	return data;
+}
+
+class CoachPanel {
+	private readonly container = new Container();
+	private readonly data: PanelData;
+	private readonly onClose: () => void;
+
+	constructor(private readonly theme: Theme, data: PanelData, onClose: () => void) {
+		this.data = data;
+		this.onClose = onClose;
+		this.rebuild();
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, "escape")) this.onClose();
+	}
+
+	render(width: number): string[] {
+		return this.container.render(width);
+	}
+
+	invalidate(): void {
+		// Rebuild so a theme change re-styles the pre-baked themed strings.
+		this.rebuild();
+	}
+
+	private addSection(title: string, lines: string[], empty: string): void {
+		const theme = this.theme;
+		this.container.addChild(new Text(theme.fg("text", theme.bold(title)), 1, 0));
+		if (lines.length === 0) {
+			this.container.addChild(new Text(theme.fg("dim", empty), 1, 0));
+			return;
+		}
+		for (const line of lines) this.container.addChild(new Text(theme.fg("muted", line), 1, 0));
+	}
+
+	private buildRecommendations(): string[] {
+		const hints: string[] = [];
+		if (this.data.dueTotal > 0) {
+			hints.push(`${this.data.dueTotal} phrase${this.data.dueTotal === 1 ? "" : "s"} due — run /skill:language-drill`);
+		}
+		if (this.data.stats?.trend === "rising") {
+			hints.push("corrections rising — run /language digest to snapshot progress");
+		}
+		if (!this.data.stats || this.data.stats.kinds.correction === 0) {
+			hints.push("no corrections yet — try /skill:language-interview");
+		}
+		return hints;
+	}
+
+	private rebuild(): void {
+		const theme = this.theme;
+		const stats = this.data.stats;
+		this.container.clear();
+		this.container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		this.container.addChild(new Text(theme.fg("accent", theme.bold("Language Coach")), 1, 0));
+		this.addSection(
+			"Weekly stats",
+			stats ? [...stats.weeks.map((w) => `${w.label}: ${w.corrections}`), `Trend: ${stats.trend}`] : [],
+			"No coaching data yet",
+		);
+		this.addSection(
+			"Top corrections",
+			stats ? stats.topCorrections.map((t) => `"${t.span}" ×${t.count}`) : [],
+			"No corrections recorded yet",
+		);
+		this.addSection(
+			"Due vocabulary",
+			this.data.due.map((s) => `${toOneLine(s.phrase, 30)} — ${toOneLine(s.translation, 30)}`),
+			"No vocabulary captured yet",
+		);
+		this.addSection(
+			"Recent",
+			stats ? stats.recent.slice(-3).map((r) => `[${r.kind}] ${r.when} — ${r.line}`) : [],
+			"No recent blocks",
+		);
+		const hints = this.buildRecommendations();
+		this.container.addChild(
+			new Text(theme.fg("warning", `Recommendations: ${hints.join(" · ") || "keep practicing!"}`), 1, 0),
+		);
+		this.container.addChild(new Text(theme.fg("dim", "esc to close"), 1, 0));
+		this.container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+	}
+}
+
+async function openDashboardPanel(ctx: ExtensionContext): Promise<void> {
+	// Resolved inside the factory once the TUI (and its terminal width) is known;
+	// overlayOptions is read after the factory runs.
+	let options: OverlayOptions = { anchor: "center", width: PANEL_MAX_WIDTH, margin: 1, maxHeight: "80%" };
+	await ctx.ui.custom((_tui, theme, _keybindings, done) => {
+		const cols = _tui.terminal.columns;
+		// Right-anchor on wide terminals, fall back to centered on narrow ones;
+		// width stays within min(48, cols - 4).
+		options = {
+			anchor: cols >= 80 ? "right-center" : "center",
+			width: Math.max(24, Math.min(PANEL_MAX_WIDTH, cols - 4)),
+			margin: 1,
+			maxHeight: "80%",
+		};
+		return new CoachPanel(theme, loadPanelData(), () => done(undefined));
+	}, { overlay: true, overlayOptions: () => options });
+}
+
+// ---------------------------------------------------------------------------
+// Translator panel (overlay, direct model call)
+// ---------------------------------------------------------------------------
+
+const TRANSLATOR_MAX_WIDTH = 60;
+const TRANSLATOR_HISTORY_LIMIT = 5;
+
+interface TranslatorDeps {
+	request: (text: string, signal: AbortSignal) => Promise<string>;
+	requestRender: () => void;
+	onClose: () => void;
+}
+
+class TranslatorPanel {
+	private readonly container = new Container();
+	private readonly input: Input;
+	private history: Array<{ source: string; result: string }> = [];
+	private state: "idle" | "loading" | "error" | "cancelled" = "idle";
+	private error = "";
+	private controller: AbortController | null = null;
+	private focusedInternal = false;
+
+	constructor(private readonly theme: Theme, private readonly config: CoachConfig, private readonly deps: TranslatorDeps) {
+		this.input = new Input({ prompt: "> " });
+		this.input.onSubmit = (value) => {
+			const text = value.trim();
+			// Empty input submits nothing; a request in flight is never stacked.
+			if (!text || this.state === "loading") return;
+			this.input.setValue("");
+			void this.translate(text);
+		};
+		this.input.onEscape = () => {
+			// Esc while a request is in flight aborts it and keeps the panel open
+			// so the "cancelled" state is visible; otherwise esc closes the panel.
+			if (this.controller) {
+				this.controller.abort();
+				this.controller = null;
+				this.state = "cancelled";
+				this.deps.requestRender();
+				return;
+			}
+			this.deps.onClose();
+		};
+		this.rebuild();
+	}
+
+	// Focusable propagation (IME support): forward focus state to the child Input.
+	get focused(): boolean {
+		return this.focusedInternal;
+	}
+	set focused(value: boolean) {
+		this.focusedInternal = value;
+		this.input.focused = value;
+	}
+
+	handleInput(data: string): void {
+		this.input.handleInput(data);
+	}
+
+	render(width: number): string[] {
+		return this.container.render(width);
+	}
+
+	invalidate(): void {
+		// Rebuild so a theme change re-styles the pre-baked themed strings.
+		this.rebuild();
+	}
+
+	private async translate(text: string): Promise<void> {
+		const controller = new AbortController();
+		this.controller = controller;
+		this.state = "loading";
+		this.error = "";
+		this.deps.requestRender();
+		try {
+			const result = await this.deps.request(text, controller.signal);
+			if (controller.signal.aborted) {
+				this.state = "cancelled";
+			} else {
+				this.history.unshift({ source: text, result });
+				if (this.history.length > TRANSLATOR_HISTORY_LIMIT) this.history.pop();
+				this.state = "idle";
+			}
+		} catch (error) {
+			// Provider, auth, and request errors render inline; never throw out of the component.
+			if (controller.signal.aborted) {
+				this.state = "cancelled";
+			} else {
+				this.state = "error";
+				this.error = error instanceof Error ? error.message : String(error);
+			}
+		} finally {
+			if (this.controller === controller) this.controller = null;
+			this.deps.requestRender();
+		}
+	}
+
+	private rebuild(): void {
+		const theme = this.theme;
+		this.container.clear();
+		this.container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		this.container.addChild(
+			new Text(
+				theme.fg("accent", theme.bold(`Translate (${this.config.nativeLanguage} → ${this.config.targetLanguage})`)),
+				1,
+				0,
+			),
+		);
+		this.container.addChild(this.input);
+		this.container.addChild(new Text(theme.fg("dim", "enter translate · esc close"), 1, 0));
+		if (this.state === "loading") this.container.addChild(new Text(theme.fg("dim", "Translating…"), 1, 0));
+		if (this.state === "cancelled") this.container.addChild(new Text(theme.fg("warning", "cancelled"), 1, 0));
+		if (this.state === "error") this.container.addChild(new Text(theme.fg("error", `Error: ${this.error}`), 1, 0));
+		for (const pair of this.history) {
+			this.container.addChild(new Text(theme.fg("muted", `▸ ${pair.source}`), 1, 0));
+			this.container.addChild(new Text(theme.fg("text", `→ ${pair.result}`), 1, 0));
+		}
+		this.container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+	}
+}
+
+async function openTranslator(ctx: ExtensionContext, config: CoachConfig): Promise<void> {
+	const runRequest = async (text: string, signal: AbortSignal): Promise<string> => {
+		// Direct pi-ai call through the active model; nothing touches the session
+		// context, so translations never enter the transcript or coach log.
+		const model = ctx.model;
+		if (!model) throw new Error("no active model; select one with /model");
+		const provider = ctx.modelRegistry.getProvider(model.provider);
+		if (!provider) throw new Error(`provider "${model.provider}" not available`);
+		const auth = await ctx.modelRegistry.getProviderAuth(model.provider);
+		if (!auth) throw new Error(`no authentication configured for provider "${model.provider}"`);
+		const messages = [
+			{
+				role: "user" as const,
+				content: `Translate the following ${config.nativeLanguage} text to ${config.targetLanguage}. Output ONLY the translation, no quotes, no notes.\n\n${text}`,
+				timestamp: Date.now(),
+			},
+		];
+		const response = await ctx.modelRegistry.complete(model, { messages }, { signal });
+		if (response.stopReason === "aborted") return "";
+		return response.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text)
+			.join("")
+			.trim();
+	};
+
+	let options: OverlayOptions = { anchor: "center", width: TRANSLATOR_MAX_WIDTH, margin: 1, maxHeight: "80%" };
+	await ctx.ui.custom((tui, theme, _keybindings, done) => {
+		const cols = tui.terminal.columns;
+		options = {
+			anchor: "center",
+			width: Math.max(32, Math.min(TRANSLATOR_MAX_WIDTH, cols - 4)),
+			margin: 1,
+			maxHeight: "80%",
+		};
+		return new TranslatorPanel(theme, config, {
+			request: runRequest,
+			requestRender: () => tui.requestRender(),
+			onClose: () => done(undefined),
+		});
+	}, { overlay: true, overlayOptions: () => options });
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		const config = loadConfig();
 		applyStatus(ctx, config && config.mode !== "off" ? config : null);
+		if (config && config.mode !== "off") refreshWidget(ctx);
+		else clearWidget(ctx);
 	});
 
 	pi.on("before_agent_start", async (event) => {
@@ -428,19 +796,53 @@ export default function (pi: ExtensionAPI) {
 		return { systemPrompt: `${base}\n\n${buildOverlay(config)}` };
 	});
 
-	pi.on("message_end", async (event) => {
+	pi.on("message_end", async (event, ctx) => {
 		if (event.message.role !== "assistant") return;
 		const config = loadConfig();
-		if (!config || config.mode === "off") return;
+		if (!config || config.mode === "off") {
+			clearWidget(ctx);
+			return;
+		}
 		const text = textFromContent(event.message.content);
 		const coach = coachBlockFrom(text);
 		if (coach) appendLog(config, coach.block, coach.kind);
 		const vocab = vocabFromText(text);
 		if (vocab.length > 0) appendVocab(vocab);
+		refreshWidget(ctx);
+	});
+
+	// Dashboard panel and translator shortcuts. alt+c / alt+t are free: the
+	// built-in keymap (docs/keybindings.md) claims alt+b/f/d/y/v/q, alt+arrows,
+	// alt+enter/backspace/delete, and ctrl+<letter> combos, but no alt+c/alt+t.
+	pi.registerShortcut("alt+c", {
+		description: "Language Coach: open the dashboard panel",
+		handler: async (ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("The dashboard panel requires the TUI", "warning");
+				return;
+			}
+			await openDashboardPanel(ctx);
+		},
+	});
+
+	pi.registerShortcut("alt+t", {
+		description: "Language Coach: open the translator panel",
+		handler: async (ctx) => {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("Translator requires the TUI", "warning");
+				return;
+			}
+			const config = loadConfig();
+			if (!config) {
+				ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
+				return;
+			}
+			await openTranslator(ctx, config);
+		},
 	});
 
 	pi.registerCommand("language", {
-		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, or set mode (on | productivity | off)",
+		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, open the dashboard panel or translator, or set mode (on | productivity | off)",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim().toLowerCase();
 
@@ -577,8 +979,31 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			if (trimmed === "panel") {
+				if (!ctx.hasUI) {
+					ctx.ui.notify("The dashboard panel requires the TUI", "warning");
+					return;
+				}
+				await openDashboardPanel(ctx);
+				return;
+			}
+
+			if (trimmed === "translate") {
+				if (!ctx.hasUI) {
+					ctx.ui.notify("Translator requires the TUI", "warning");
+					return;
+				}
+				const config = loadConfig();
+				if (!config) {
+					ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
+					return;
+				}
+				await openTranslator(ctx, config);
+				return;
+			}
+
 			if (!MODES.includes(trimmed as CoachMode)) {
-				ctx.ui.notify("Usage: /language [on | productivity | off] (no args shows status or runs setup)", "warning");
+				ctx.ui.notify("Usage: /language [on | productivity | off | panel | translate] (no args shows status or runs setup)", "warning");
 				return;
 			}
 

@@ -44,6 +44,16 @@ Data files live in `~/.pi/agent` (environment, not source) and are unaffected by
 - `/skill:language-interview [topic]` — start a mock interview.
 - `/skill:language-drill [count]` — targeted practice of your most frequent corrected mistakes (default 5 exercises).
 
+## TUI extras
+
+Three TUI-only extras (guarded by `ctx.hasUI`; headless sessions fall back to a notification or ignore them). All are read-only over the existing data files except the translator, which calls the model directly.
+
+- **Status widget** — a 1–2 line `language-coach` widget above the editor (`corrections (7d)`, trend, vocabulary due, top correction + drill hint). Recomputed on session start and after every assistant message from the log/vocab files (zero model cost); cleared when mode is `off`.
+- **Dashboard panel** — `/language panel` or **alt+c** opens a bordered side panel overlay: weekly correction stats with trend, top corrections, due vocabulary, the 3 most recent blocks, and a `Recommendations:` line (drill hint when vocabulary is due, digest hint when corrections are rising, interview hint when no corrections yet). Anchored to the right edge on wide terminals, centered on narrow ones. `esc` closes.
+- **Translator panel** — `/language translate` or **alt+t** opens a scratchpad overlay titled `Translate (native → target)`. Type text, press `enter` to translate; the result renders in the panel with the previous pairs (most recent first, capped at 5). `esc` aborts an in-flight translation (shown as `cancelled`) and closes when idle. Provider, auth, and request errors render inline in the panel.
+  - **Privacy:** the translator calls the model directly through the active model's provider (resolved via `ctx.modelRegistry.getProvider` / `getProviderAuth`); nothing is sent to the session context — translations never enter the transcript, the coach log, or any data file.
+  - **Active model:** translations use whichever model is currently active (and its configured provider auth); switch models with `/model` to change the translator's engine.
+
 ## Progress review
 
 Ask the assistant for a "progress review": it reads recent `language-coach-log.jsonl` entries plus the Engram mistake history (`topic_key: language-mistakes-<target>`) and summarizes recurring mistakes, weekly volume, improvements, and focus points.
