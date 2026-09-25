@@ -290,3 +290,35 @@ Study sources: gentle-shell `lib/shell-todo.ts` (renderTodoCard collapsedRow),
 - Targeted validator **approved**; acknowledged, authority burned. Two
   informational advisories (R3-002 WARNING :589, R3-003 SUGGESTION :627)
   recorded as later polish.
+
+## Widget retirement (2026-09-25)
+
+**User decision:** the persistent dashboard rail supersedes the status widget
+above the editor; the widget is retired.
+
+Removed from `extensions/language-coach.ts` (all widget-only):
+
+- `WIDGET_ID` constant and the `widgetVisible` flag.
+- `countCorrectionsLast7d` and `countDueVocab` — used only by
+  `buildWidgetLines`; the rail and panel compute the same data through
+  `loadPanelData` (`aggregateStats`, `vocabSchedule`).
+- `buildWidgetLines`, `refreshWidget`, and `clearWidget`, plus their
+  `session_start` / `message_end` wiring. `message_end` no longer touches the
+  widget at all.
+
+Kept, unchanged:
+
+- `message_end` coach logging (`appendLog`) and vocab capture (`appendVocab`);
+  the sidebar invalidation (`invalidateSidebar`) after data changes.
+- `session_start` config/status handling (`applyStatus`); rail mount when the
+  mode is active and `unmountCoachSidebar` when mode = off, on
+  `session_shutdown`, and on mode-off transitions.
+- The rail mount idiom: `setWidget`'s component factory remains the only
+  non-interactive hook that provides `tui`/`theme` (the gentle-shell
+  `setFooter` idiom). `mountCoachRail` mounts through it and immediately
+  clears the empty widget, so nothing is painted above the editor. The
+  never-throw policies of the remaining handlers are unchanged.
+
+The `message_end` data flow is unchanged except the widget: log and vocab
+writes still happen, and the rail still repaints through its digest plus the
+explicit invalidation.

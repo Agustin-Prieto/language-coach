@@ -428,12 +428,9 @@ function vocabSchedule(entries: VocabCapture[], reviews: VocabReview[], now: Dat
 }
 
 // ---------------------------------------------------------------------------
-// TUI widget (above the editor)
+// Persistent dashboard rail (gentle-shell fullscreen sidebar)
 // ---------------------------------------------------------------------------
 
-const WIDGET_ID = "language-coach";
-// Tracks whether the widget is currently rendered so mode=off clears it once.
-let widgetVisible = false;
 // Terminal whose sidebar the coach mounted (for invalidation and shutdown).
 let railTui: TUI | undefined;
 // Registered collapse keybinding (set by the extension entry point before any
@@ -455,77 +452,29 @@ function toggleCoachRail(): void {
 	}
 }
 
-function countCorrectionsLast7d(entries: LogEntry[], now: Date): number {
-	const cutoff = now.getTime() - 7 * DAY_MS;
-	return entries.filter(
-		(e) => e.kind === "correction" && (parseLogDate(e.ts)?.getTime() ?? Number.NEGATIVE_INFINITY) >= cutoff,
-	).length;
-}
-
-function countDueVocab(now: Date): number {
-	try {
-		if (!existsSync(VOCAB_PATH)) return 0;
-		const captures = parseVocabEntries(readFileSync(VOCAB_PATH, "utf8"));
-		const reviews = existsSync(VOCAB_REVIEWS_PATH) ? parseVocabReviews(readFileSync(VOCAB_REVIEWS_PATH, "utf8")) : [];
-		return vocabSchedule(captures, reviews, now).filter((s) => s.due).length;
-	} catch {
-		// Vocab reads are best-effort for the widget; a failure just reports 0.
-		return 0;
-	}
-}
-
-function buildWidgetLines(): string[] {
-	const now = new Date();
-	const raw = existsSync(LOG_PATH) ? readFileSync(LOG_PATH, "utf8") : "";
-	const { entries } = parseLogEntries(raw);
-	const stats = aggregateStats(entries);
-	const lines = [
-		`Coach · corrections (7d): ${countCorrectionsLast7d(entries, now)} · trend: ${stats.trend} · vocab due: ${countDueVocab(now)}`,
-	];
-	const top = stats.topCorrections[0];
-	if (top) {
-		lines.push(`Top: "${toOneLine(top.span, 40)}" ×${top.count} · drill: /skill:language-drill`);
-	}
-	return lines;
-}
-
-function refreshWidget(ctx: ExtensionContext): void {
+// The setWidget component factory is the only non-interactive hook through
+// which tui/theme first become reachable (the same idiom gentle-shell uses
+// with setFooter), so the rail mounts through it once per terminal. The
+// factory runs synchronously inside setWidget and the empty widget is
+// cleared right after, so nothing is painted above the editor: the status
+// widget was retired here in favor of the persistent rail (2026-09-25).
+function mountCoachRail(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
 	try {
-		ctx.ui.setWidget(WIDGET_ID, (tui, theme) => {
-			// The component factory is the persistent mount point where the TUI and
-			// theme first become reachable (the same idiom gentle-shell uses with
-			// setFooter); the sidebar machinery attaches here once per terminal.
+		ctx.ui.setWidget("language-coach", (tui, theme) => {
 			mountCoachSidebar(tui, theme);
-			const lines = buildWidgetLines();
 			return {
 				render() {
-					return lines.map((line, index) => theme.fg(index === 0 ? "accent" : "muted", line));
+					return [];
 				},
 				invalidate() {},
 			};
 		});
-		widgetVisible = true;
+		ctx.ui.setWidget("language-coach", undefined);
 	} catch {
-		// Widget refresh must never break the session (read-only, zero model cost).
+		// Rail mount is best-effort; the /language panel fallback works.
 	}
 }
-
-function clearWidget(ctx: ExtensionContext): void {
-	if (!ctx.hasUI || !widgetVisible) return;
-	try {
-		ctx.ui.setWidget(WIDGET_ID, undefined);
-	} catch {
-		// Clearing is best-effort; never break the session.
-	} finally {
-		widgetVisible = false;
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Persistent dashboard rail (gentle-shell fullscreen sidebar)
-// ---------------------------------------------------------------------------
-
 // gentle-shell stores sidebar state on the terminal, so the coach's marker
 // lives there too: extension hosts may isolate modules, while Pi keeps the
 // terminal across sessions and regular/fullscreen transitions.
@@ -1086,11 +1035,8 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 	pi.on("session_start", async (_event, ctx) => {
 		const config = loadConfig();
 		applyStatus(ctx, config && config.mode !== "off" ? config : null);
-		if (config && config.mode !== "off") refreshWidget(ctx);
-		else {
-			clearWidget(ctx);
-			unmountCoachSidebar(railTui);
-		}
+		if (config && config.mode !== "off") mountCoachRail(ctx);
+		else unmountCoachSidebar(railTui);
 	});
 
 	pi.on("before_agent_start", async (event) => {
@@ -1100,11 +1046,10 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 		return { systemPrompt: `${base}\n\n${buildOverlay(config)}` };
 	});
 
-	pi.on("message_end", async (event, ctx) => {
+	pi.on("message_end", async (event, _ctx) => {
 		if (event.message.role !== "assistant") return;
 		const config = loadConfig();
 		if (!config || config.mode === "off") {
-			clearWidget(ctx);
 			unmountCoachSidebar(railTui);
 			return;
 		}
@@ -1113,7 +1058,6 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 		if (coach) appendLog(config, coach.block, coach.kind);
 		const vocab = vocabFromText(text);
 		if (vocab.length > 0) appendVocab(vocab);
-		refreshWidget(ctx);
 		try {
 			// Data changed: mark the terminal-owned sidebar output stale so the
 			// fullscreen rail repaints on the next frame.
