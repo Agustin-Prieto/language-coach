@@ -43,3 +43,9 @@ targeted exercises.
 - Skill loads on next pi start (package convention directory skills/).
 - Real data to target (2026-09-24): i x7, in x3, perfectly, would you like,
   on, commands, pc, let's.
+
+## Advisories addressed (2026-09-24)
+- The four informational findings from review-eeb6dabc4d0e5bfe were
+  addressed by wording changes only: 1–10 clamp for the exercise count,
+  tie ordering note for span ranking, mem_save failover (summary still
+  completes), and explicit overlay-prefix suppression during drills.
