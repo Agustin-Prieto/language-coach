@@ -755,7 +755,7 @@ function weeklyRows(stats: StatsSummary, theme: Theme): string[] {
 function collapsedCoachRow(data: PanelData): string {
 	const due = data.due[0];
 	if (due) return `${toOneLine(due.phrase, 30)} — ${toOneLine(due.translation, 30)}`;
-	if (data.stats) return `${data.stats.weeks[3].corrections} corrections this week · ${data.stats.trend}`;
+	if (data.stats?.weeks.length) return `${data.stats.weeks.at(-1)!.corrections} corrections this week · ${data.stats.trend}`;
 	return "no coaching data yet";
 }
 
@@ -802,7 +802,7 @@ function coachCard(data: PanelData, theme: Theme, width: number, options: CoachC
 	const control = `${icon} ${width >= 28 ? actionLabel : ""}`.trimEnd();
 	return {
 		title: `Language Coach ${paintHoverable(theme, control, options.hovered, "accent")}`,
-		subtitle: stats ? `${stats.weeks[3].corrections} this week · ${stats.trend}` : undefined,
+		subtitle: stats?.weeks.length ? `${stats.weeks.at(-1)!.corrections} this week · ${stats.trend}` : undefined,
 		body: options.collapsed ? [collapsedCoachRow(data)] : expandedCoachBody(data, theme),
 		tone: CARD_TONE.INFO,
 	};
