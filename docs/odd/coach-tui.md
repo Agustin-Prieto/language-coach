@@ -177,3 +177,18 @@ Widget colors aligned with the card roles (first line `accent`, second
   never rebuilt it — completed translations never rendered. Fix: render()
   composes lines from live state.
 - Commit: `6e44710` (feature) + docs record.
+
+## Review disposition (user decision, 2026-09-25)
+- Native review lineage `review-edbc57ad0f20262c` (medium, lens
+  review-reliability) could not close: the reviewer relay was refused twice
+  at admission with an identical deterministic error ("reviewer payload
+  contains no complete JSON object … scan ended at byte 4954") — the
+  preserved payload (.git/gentle-ai/rejected-results/) shows a completed
+  review with no blockers, so this looks like a gentle-ai admission-scanner
+  defect, not a review finding. No authority was consumed; the lineage
+  remains open.
+- The user explicitly allowed this candidate to ship unreviewed (ordinary
+  repository policy). Basis: independent verification 6/6 (task
+  muh8q7wn-2-0gxa) + harness-proven translator fix + tsc strict clean.
+- Follow-up: report the admission-scanner defect upstream and re-run a
+  fresh review on the next candidate.
