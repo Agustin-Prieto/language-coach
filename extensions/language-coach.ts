@@ -818,7 +818,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Language Coach: open the dashboard panel",
 		handler: async (ctx) => {
 			if (!ctx.hasUI) {
-				ctx.ui.notify("The dashboard panel requires the TUI", "warning");
+				console.log("The dashboard panel requires the TUI");
 				return;
 			}
 			await openDashboardPanel(ctx);
@@ -829,7 +829,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Language Coach: open the translator panel",
 		handler: async (ctx) => {
 			if (!ctx.hasUI) {
-				ctx.ui.notify("Translator requires the TUI", "warning");
+				console.log("Translator requires the TUI");
 				return;
 			}
 			const config = loadConfig();
@@ -981,7 +981,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (trimmed === "panel") {
 				if (!ctx.hasUI) {
-					ctx.ui.notify("The dashboard panel requires the TUI", "warning");
+					console.log("The dashboard panel requires the TUI");
 					return;
 				}
 				await openDashboardPanel(ctx);
@@ -990,7 +990,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (trimmed === "translate") {
 				if (!ctx.hasUI) {
-					ctx.ui.notify("Translator requires the TUI", "warning");
+					console.log("Translator requires the TUI");
 					return;
 				}
 				const config = loadConfig();
