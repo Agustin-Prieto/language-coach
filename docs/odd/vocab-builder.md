@@ -43,4 +43,10 @@ practice them in drills.
   the Vocabulary line.
 - Scheduling note: first correct review → 2-day interval (streak-1
   indexing fixed pre-verification per agreed 2→4→7→14→30 progression).
-- Commit: (this feature commit).
+- Commit: `431916d` (feature) + docs record.
+
+## Native review
+- Lineage `review-39eda82b73e5e4c8`, medium tier, lens `review-reliability`,
+  candidate `087fca0..431916d` — **approved**, acknowledged, authority burned.
+- Known accepted behaviors (documented, non-blocking): reviews replay in
+  file order (chronological by construction); capture requires the em dash.
