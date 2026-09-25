@@ -277,3 +277,16 @@ Study sources: gentle-shell `lib/shell-todo.ts` (renderTodoCard collapsedRow),
   suffix, and collapsed summary.
 - Runtime mouse/hover/keyboard interaction is user-owned visual testing after
   /reload (same disposition as the v2 rail work).
+
+## Rail collapse review (2026-09-25)
+- Lineage `review-a286895b2e99b1be`, medium, lens review-reliability —
+  first verdict **correction_required**: R3-001 CRITICAL, unguarded
+  `stats.weeks[3]` index in the two rail summary/subtitle sites
+  introduced by the polish.
+- Bounded correction (4 diff lines, plan
+  `review.capture-correction-plan`): both sites now use a length-guarded
+  `weeks.at(-1)`; committed as `6265191`. The identical pre-existing
+  access in renderStats (line ~290) is base-only and stays a follow-up.
+- Targeted validator **approved**; acknowledged, authority burned. Two
+  informational advisories (R3-002 WARNING :589, R3-003 SUGGESTION :627)
+  recorded as later polish.
