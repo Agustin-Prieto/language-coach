@@ -44,4 +44,4 @@ calls the model directly without touching the session context.
   audit.
 - Runtime TUI behavior (overlay rendering, esc/abort UX, focus/IME) is
   user-owned visual testing after /reload.
-- Commit: (this feature commit).
+- Commits: `719f496` (feature) + `d05f36c` (correction) + (this record).
