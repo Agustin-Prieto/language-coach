@@ -13,6 +13,7 @@ interface CoachConfig {
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "language-coach.json");
 const LOG_PATH = join(homedir(), ".pi", "agent", "language-coach-log.jsonl");
+const DIGEST_PATH = join(homedir(), ".pi", "agent", "language-coach-digest.md");
 const MODES: readonly CoachMode[] = ["on", "productivity", "off"];
 let warnedAboutConfig = false;
 
@@ -166,6 +167,38 @@ function extractBoldSpans(line: string): string[] {
 	return spans;
 }
 
+function parseLogEntries(raw: string): { entries: LogEntry[]; skipped: number } {
+	const entries: LogEntry[] = [];
+	let skipped = 0;
+	for (const line of raw.split("\n")) {
+		const t = line.trim();
+		if (!t) continue;
+		try {
+			const parsed = JSON.parse(t) as Record<string, unknown>;
+			if (
+				typeof parsed.ts === "string" &&
+				(parsed.kind === "correction" || parsed.kind === "translation" || parsed.kind === "unmarked") &&
+				typeof parsed.line === "string"
+			) {
+				entries.push({
+					ts: parsed.ts,
+					kind: parsed.kind,
+					native: typeof parsed.native === "string" ? parsed.native : "",
+					target: typeof parsed.target === "string" ? parsed.target : "",
+					line: parsed.line,
+				});
+			} else {
+				skipped++;
+			}
+		} catch {
+			// Malformed lines never break stats (R3-003), but they are counted
+			// so the summary can surface data-quality issues.
+			skipped++;
+		}
+	}
+	return { entries, skipped };
+}
+
 export function aggregateStats(entries: LogEntry[]): StatsSummary {
 	const kinds = { correction: 0, translation: 0, unmarked: 0 };
 	const currentWeekStart = startOfWeek(new Date());
@@ -272,7 +305,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("language", {
-		description: "Language Coach: show status, run setup, view stats, or set mode (on | productivity | off)",
+		description: "Language Coach: show status, run setup, view stats, write a digest, or set mode (on | productivity | off)",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim().toLowerCase();
 
@@ -313,40 +346,60 @@ export default function (pi: ExtensionAPI) {
 						ctx.ui.notify("No coaching data yet", "warning");
 						return;
 					}
-					const entries: LogEntry[] = [];
-					let skipped = 0;
-					for (const line of raw.split("\n")) {
-						const t = line.trim();
-						if (!t) continue;
-						try {
-							const parsed = JSON.parse(t) as Record<string, unknown>;
-							if (
-								typeof parsed.ts === "string" &&
-								(parsed.kind === "correction" || parsed.kind === "translation" || parsed.kind === "unmarked") &&
-								typeof parsed.line === "string"
-							) {
-								entries.push({
-									ts: parsed.ts,
-									kind: parsed.kind,
-									native: typeof parsed.native === "string" ? parsed.native : "",
-									target: typeof parsed.target === "string" ? parsed.target : "",
-									line: parsed.line,
-								});
-							} else {
-								skipped++;
-							}
-						} catch {
-							// Malformed lines never break stats (R3-003), but they are counted
-							// so the summary can surface data-quality issues.
-							skipped++;
-						}
-					}
+					const { entries, skipped } = parseLogEntries(raw);
 					let summary = renderStats(aggregateStats(entries));
 					if (skipped > 0) summary += `\n⚠ Skipped ${skipped} malformed log line${skipped === 1 ? "" : "s"}`;
 					if (ctx.hasUI) ctx.ui.notify(summary, "info");
 					else console.log(summary);
 				} catch (error) {
 					ctx.ui.notify(`Language Coach: failed to compute stats (${String(error)})`, "warning");
+				}
+				return;
+			}
+
+			if (trimmed === "digest") {
+				const config = loadConfig();
+				if (!config) {
+					ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
+					return;
+				}
+				try {
+					const raw = existsSync(LOG_PATH) ? readFileSync(LOG_PATH, "utf8") : "";
+					if (!raw.trim()) {
+						ctx.ui.notify("No coaching data yet", "warning");
+						return;
+					}
+					const { entries } = parseLogEntries(raw);
+					const summary = renderStats(aggregateStats(entries));
+					// Last `## Digest — ` header in the existing digest file marks the
+					// previous run; corrections strictly after it are counted as new.
+					let previousTs: number | null = null;
+					if (existsSync(DIGEST_PATH)) {
+						const digestRaw = readFileSync(DIGEST_PATH, "utf8");
+						for (const line of digestRaw.split("\n")) {
+							if (!line.startsWith("## Digest — ")) continue;
+							const date = parseLogDate(line.slice("## Digest — ".length).trim());
+							if (date) previousTs = date.getTime();
+						}
+					}
+					const section = [`## Digest — ${new Date().toISOString()}`, "", summary];
+					if (previousTs !== null) {
+						const since = entries.filter(
+							(e) => e.kind === "correction" && (parseLogDate(e.ts)?.getTime() ?? -Infinity) > previousTs,
+						).length;
+						section.push(`Since last digest: ${since} corrections`);
+					}
+					try {
+						appendFileSync(DIGEST_PATH, `${section.join("\n")}\n`, "utf8");
+					} catch (error) {
+						ctx.ui.notify(`Language Coach: could not write digest (${String(error)})`, "warning");
+						return;
+					}
+					const done = `Digest saved to ${DIGEST_PATH}`;
+					if (ctx.hasUI) ctx.ui.notify(done, "info");
+					else console.log(done);
+				} catch (error) {
+					ctx.ui.notify(`Language Coach: failed to write digest (${String(error)})`, "warning");
 				}
 				return;
 			}

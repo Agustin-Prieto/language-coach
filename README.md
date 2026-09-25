@@ -30,12 +30,14 @@ Data files live in `~/.pi/agent` (environment, not source) and are unaffected by
 |---|---|
 | `language-coach.json` | `{ nativeLanguage, targetLanguage, mode: "on" \| "productivity" \| "off" }` |
 | `language-coach-log.jsonl` | One entry per coach block: `{ ts, kind: correction\|translation\|unmarked, native, target, line }` |
+| `language-coach-digest.md` | Appended digest sections written by /language digest |
 
 ## Commands
 
 - `/language` — show status, or interactive setup if no config exists.
 - `/language on|productivity|off` — set mode (persisted). `off` injects nothing (zero cost).
 - `/language stats` — progress dashboard from the coach log: block counts by kind, corrections per week for the last 4 ISO weeks with a trend label (improving / stable / rising), top recurring corrections (the `**bold**` spans), and the last 5 blocks. Read-only; headless sessions print the summary to the console.
+- `/language digest` — append a dated digest section (totals, weekly trend, top corrections, "since last digest" count) to `~/.pi/agent/language-coach-digest.md`
 - `/skill:language-interview [topic]` — start a mock interview.
 - `/skill:language-drill [count]` — targeted practice of your most frequent corrected mistakes (default 5 exercises).
 
