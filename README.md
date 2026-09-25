@@ -48,11 +48,20 @@ Data files live in `~/.pi/agent` (environment, not source) and are unaffected by
 
 Three TUI-only extras (guarded by `ctx.hasUI`; headless sessions fall back to a notification or ignore them). All are read-only over the existing data files except the translator, which calls the model directly.
 
-- **Status widget** — a 1–2 line `language-coach` widget above the editor (`corrections (7d)`, trend, vocabulary due, top correction + drill hint). Recomputed on session start and after every assistant message from the log/vocab files (zero model cost); cleared when mode is `off`.
-- **Dashboard panel** — `/language panel` or **alt+c** opens a bordered side panel overlay: weekly correction stats with trend, top corrections, due vocabulary, the 3 most recent blocks, and a `Recommendations:` line (drill hint when vocabulary is due, digest hint when corrections are rising, interview hint when no corrections yet). Anchored to the right edge on wide terminals, centered on narrow ones. `esc` closes.
-- **Translator panel** — `/language translate` or **alt+t** opens a scratchpad overlay titled `Translate (native → target)`. Type text, press `enter` to translate; the result renders in the panel with the previous pairs (most recent first, capped at 5). `esc` aborts an in-flight translation (shown as `cancelled`) and closes when idle. Provider, auth, and request errors render inline in the panel.
+- **Status widget** — a 1–2 line `language-coach` widget above the editor (`corrections (7d)`, trend, vocabulary due, top correction + drill hint). Recomputed on session start and after every assistant message from the log/vocab files (zero model cost); cleared when mode is `off`. Painted with the card system's theme roles (accent headline, muted detail).
+- **Dashboard rail (persistent)** — the coach now docks a gentle-shell-style card rail automatically in fullscreen terminals: it appears whenever the terminal is wide enough per gentle-shell's breakpoint (≥ 140 columns) and live-updates from the log/vocab files after every assistant message (weekly corrections + trend, due vocabulary (up to 5), top corrections (up to 5), the 3 most recent blocks, and a Recommendations line). `/language panel` + **alt+c** remain as the fallback overlay for narrow or non-fullscreen terminals.
+- **Dashboard panel (narrow fallback)** — `/language panel` or **alt+c** opens the same dashboard as a card-styled overlay for narrow (< 140 cols) or non-fullscreen terminals. Anchored to the right edge on wide terminals, centered on narrow ones. `esc` closes.
+- **Translator panel** — `/language translate` or **alt+t** opens a scratchpad overlay titled `Translate (native → target)` in the same card design. Type text, press `enter` to translate; the result renders in the panel with the previous pairs (most recent first, capped at 5). `esc` aborts an in-flight translation (shown as `cancelled`) and closes when idle. Provider, auth, and request errors render inline in the panel; an empty model response renders as an error instead of adding an empty history entry. Fixed: the panel previously baked state into its container once and never rebuilt it, so completed translations never rendered — results now render live. Translations are still direct model calls; nothing enters the session context.
   - **Privacy:** the translator calls the model directly through the active model's provider (resolved via `ctx.modelRegistry.getProvider` / `getProviderAuth`); nothing is sent to the session context — translations never enter the transcript, the coach log, or any data file.
   - **Active model:** translations use whichever model is currently active (and its configured provider auth); switch models with `/model` to change the translator's engine.
+
+**Gentle Shell design** — the boxes use the local gentle-shell project's card/sidebar libraries, imported at runtime through a node_modules symlink. Required one-time setup from the repo root:
+
+```bash
+mkdir -p node_modules && ln -sfn ../../gentle-shell/lib node_modules/gentle-shell-lib
+```
+
+(`node_modules` is gitignored; without the symlink the extension fails to load. Compile-time types come from stub declarations in `types/gentle-shell/`.)
 
 ## Progress review
 

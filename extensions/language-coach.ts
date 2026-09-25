@@ -1,7 +1,17 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
-import { Container, Input, matchesKey, type OverlayOptions, Text } from "@earendil-works/pi-tui";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { Input, matchesKey, type OverlayOptions, type TUI } from "@earendil-works/pi-tui";
+import {
+	CARD_TONE,
+	cardBottom,
+	cardInnerWidth,
+	cardLine,
+	cardTop,
+	renderCard,
+	type Card,
+} from "gentle-shell-lib/shell-card.ts";
+import { sidebarState, type SidebarRail } from "gentle-shell-lib/shell-sidebar.ts";
+import { installSidebar, invalidateSidebar } from "gentle-shell-lib/shell-sidebar-layout.ts";
+import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -424,6 +434,8 @@ function vocabSchedule(entries: VocabCapture[], reviews: VocabReview[], now: Dat
 const WIDGET_ID = "language-coach";
 // Tracks whether the widget is currently rendered so mode=off clears it once.
 let widgetVisible = false;
+// Terminal whose sidebar the coach mounted (for invalidation and shutdown).
+let railTui: TUI | undefined;
 
 function countCorrectionsLast7d(entries: LogEntry[], now: Date): number {
 	const cutoff = now.getTime() - 7 * DAY_MS;
@@ -462,7 +474,19 @@ function buildWidgetLines(): string[] {
 function refreshWidget(ctx: ExtensionContext): void {
 	if (!ctx.hasUI) return;
 	try {
-		ctx.ui.setWidget(WIDGET_ID, buildWidgetLines());
+		ctx.ui.setWidget(WIDGET_ID, (tui, theme) => {
+			// The component factory is the persistent mount point where the TUI and
+			// theme first become reachable (the same idiom gentle-shell uses with
+			// setFooter); the sidebar machinery attaches here once per terminal.
+			mountCoachSidebar(tui, theme);
+			const lines = buildWidgetLines();
+			return {
+				render() {
+					return lines.map((line, index) => theme.fg(index === 0 ? "accent" : "muted", line));
+				},
+				invalidate() {},
+			};
+		});
 		widgetVisible = true;
 	} catch {
 		// Widget refresh must never break the session (read-only, zero model cost).
@@ -481,7 +505,182 @@ function clearWidget(ctx: ExtensionContext): void {
 }
 
 // ---------------------------------------------------------------------------
-// Dashboard panel (overlay)
+// Persistent dashboard rail (gentle-shell fullscreen sidebar)
+// ---------------------------------------------------------------------------
+
+// gentle-shell stores sidebar state on the terminal, so the coach's marker
+// lives there too: extension hosts may isolate modules, while Pi keeps the
+// terminal across sessions and regular/fullscreen transitions.
+const COACH_SIDEBAR_MARKER = Symbol.for("language-coach.sidebar.marker");
+
+// The fullscreen layout only renders the hardcoded rail section keys
+// "footer" / "agents" / "todo" (shell-sidebar-layout.ts prepare()); a custom
+// key like "language-coach" would never paint. "agents" is not registered by
+// any shipped gentle-shell extension, so the coach uses it in both ownership
+// modes: alone when it owns the sidebar, or as one more part next to
+// gentle-shell's "footer" shell bar when that extension is running.
+const RAIL_PART_KEY = "agents";
+
+interface CoachSidebarMarker {
+	installed: boolean;
+	part: SidebarRail | undefined;
+	uninstall: (() => void) | undefined;
+}
+
+function coachSidebarMarker(tui: TUI): CoachSidebarMarker {
+	const terminal = tui.terminal as unknown as Record<symbol, CoachSidebarMarker | undefined>;
+	const existing = terminal[COACH_SIDEBAR_MARKER];
+	if (existing) return existing;
+	const created: CoachSidebarMarker = { installed: false, part: undefined, uninstall: undefined };
+	terminal[COACH_SIDEBAR_MARKER] = created;
+	return created;
+}
+
+// Cheap digest of the live data the rail paints: file sizes and mtimes. The
+// fullscreen layout memo re-renders a part only when its digest changes, so
+// a change to any of the three data files repaints the rail without an
+// explicit invalidation (invalidateSidebar on message_end covers same-mtime
+// writes).
+function fileSignature(path: string): string {
+	try {
+		if (!existsSync(path)) return "0";
+		const stats = statSync(path);
+		return `${stats.size}:${stats.mtimeMs}`;
+	} catch {
+		return "0";
+	}
+}
+
+function coachDigest(): string {
+	return [LOG_PATH, VOCAB_PATH, VOCAB_REVIEWS_PATH].map(fileSignature).join("|");
+}
+
+function mountCoachSidebar(tui: TUI, theme: Theme): void {
+	if (!tui.terminal) return;
+	const marker = coachSidebarMarker(tui);
+	if (marker.installed) return;
+	marker.installed = true;
+	railTui = tui;
+	const state = sidebarState(tui);
+	// gentle-shell owns the sidebar when its shell bar part is already
+	// registered or the fullscreen layout is active; the coach then only adds
+	// its own part so both rails coexist. installSidebar is not re-entrant
+	// safe (a second call stacks a second layout override and interval), so it
+	// must be skipped when another owner is present.
+	const gentleShellOwns = state.parts.has("footer") || state.active;
+	if (!gentleShellOwns) {
+		try {
+			marker.uninstall = installSidebar(tui, theme);
+		} catch {
+			// Without the layout hook the rail part stays registered; it simply
+			// paints only if another owner's layout picks it up.
+			marker.uninstall = undefined;
+		}
+	}
+	const rail: SidebarRail = {
+		render(width: number): string[] {
+			try {
+				return renderCard(coachCard(loadPanelData()), theme, width, { expanded: true });
+			} catch {
+				// The rail must never take the sidebar layout down.
+				return [];
+			}
+		},
+		invalidate() {},
+		digest() {
+			try {
+				return coachDigest();
+			} catch {
+				return "";
+			}
+		},
+	};
+	try {
+		state.parts.set(RAIL_PART_KEY, rail);
+		marker.part = rail;
+	} catch {
+		// Rail registration is best-effort; the /language panel fallback works.
+	}
+}
+
+function unmountCoachSidebar(tui: TUI | undefined): void {
+	if (!tui?.terminal) return;
+	const marker = coachSidebarMarker(tui);
+	if (!marker.installed) return;
+	try {
+		const state = sidebarState(tui);
+		if (marker.part && state.parts.get(RAIL_PART_KEY) === marker.part) state.parts.delete(RAIL_PART_KEY);
+		marker.uninstall?.();
+	} catch {
+		// Unmounting must never break shutdown.
+	} finally {
+		marker.part = undefined;
+		marker.uninstall = undefined;
+		marker.installed = false;
+	}
+	if (railTui === tui) railTui = undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard card (shared by the rail and the overlay fallback)
+// ---------------------------------------------------------------------------
+
+function recommendations(data: PanelData): string[] {
+	const hints: string[] = [];
+	if (data.dueTotal > 0) {
+		hints.push(`${data.dueTotal} phrase${data.dueTotal === 1 ? "" : "s"} due — run /skill:language-drill`);
+	}
+	if (data.stats?.trend === "rising") {
+		hints.push("corrections rising — run /language digest to snapshot progress");
+	}
+	if (!data.stats || data.stats.kinds.correction === 0) {
+		hints.push("no corrections yet — try /skill:language-interview");
+	}
+	return hints;
+}
+
+function addCardSection(body: string[], title: string, lines: string[], empty: string): void {
+	body.push("", title);
+	if (lines.length === 0) {
+		body.push(`  ${empty}`);
+		return;
+	}
+	for (const line of lines) body.push(`  ${line}`);
+}
+
+function coachCard(data: PanelData): Card {
+	const stats = data.stats;
+	const body: string[] = [];
+	if (stats) {
+		body.push(stats.weeks.map((w) => `${w.label}: ${w.corrections}`).join(" · "));
+		body.push(`Trend: ${stats.trend}`);
+	} else {
+		body.push("No coaching data yet");
+	}
+	addCardSection(
+		body,
+		"Due vocabulary",
+		data.due.map((s) => `${toOneLine(s.phrase, 30)} — ${toOneLine(s.translation, 30)}`),
+		"No vocabulary captured yet",
+	);
+	addCardSection(
+		body,
+		"Top corrections",
+		stats ? stats.topCorrections.map((t) => `"${t.span}" ×${t.count}`) : [],
+		"No corrections recorded yet",
+	);
+	addCardSection(
+		body,
+		"Recent",
+		stats ? stats.recent.slice(-3).map((r) => `[${r.kind}] ${r.when} — ${r.line}`) : [],
+		"No recent blocks",
+	);
+	addCardSection(body, "Recommendations", recommendations(data), "keep practicing!");
+	return { title: "Language Coach", body, tone: CARD_TONE.INFO };
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard panel (overlay fallback for narrow / non-fullscreen terminals)
 // ---------------------------------------------------------------------------
 
 const PANEL_MAX_WIDTH = 48;
@@ -517,14 +716,12 @@ function loadPanelData(): PanelData {
 }
 
 class CoachPanel {
-	private readonly container = new Container();
 	private readonly data: PanelData;
 	private readonly onClose: () => void;
 
 	constructor(private readonly theme: Theme, data: PanelData, onClose: () => void) {
 		this.data = data;
 		this.onClose = onClose;
-		this.rebuild();
 	}
 
 	handleInput(data: string): void {
@@ -532,71 +729,20 @@ class CoachPanel {
 	}
 
 	render(width: number): string[] {
-		return this.container.render(width);
+		// Lines are composed from live state on every render; no cached children
+		// to invalidate. Same card look as the persistent rail.
+		try {
+			return renderCard(coachCard(this.data), this.theme, width, {
+				expanded: true,
+				hint: "esc to close",
+			});
+		} catch {
+			// An overlay must never throw out of render.
+			return [];
+		}
 	}
 
-	invalidate(): void {
-		// Rebuild so a theme change re-styles the pre-baked themed strings.
-		this.rebuild();
-	}
-
-	private addSection(title: string, lines: string[], empty: string): void {
-		const theme = this.theme;
-		this.container.addChild(new Text(theme.fg("text", theme.bold(title)), 1, 0));
-		if (lines.length === 0) {
-			this.container.addChild(new Text(theme.fg("dim", empty), 1, 0));
-			return;
-		}
-		for (const line of lines) this.container.addChild(new Text(theme.fg("muted", line), 1, 0));
-	}
-
-	private buildRecommendations(): string[] {
-		const hints: string[] = [];
-		if (this.data.dueTotal > 0) {
-			hints.push(`${this.data.dueTotal} phrase${this.data.dueTotal === 1 ? "" : "s"} due — run /skill:language-drill`);
-		}
-		if (this.data.stats?.trend === "rising") {
-			hints.push("corrections rising — run /language digest to snapshot progress");
-		}
-		if (!this.data.stats || this.data.stats.kinds.correction === 0) {
-			hints.push("no corrections yet — try /skill:language-interview");
-		}
-		return hints;
-	}
-
-	private rebuild(): void {
-		const theme = this.theme;
-		const stats = this.data.stats;
-		this.container.clear();
-		this.container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-		this.container.addChild(new Text(theme.fg("accent", theme.bold("Language Coach")), 1, 0));
-		this.addSection(
-			"Weekly stats",
-			stats ? [...stats.weeks.map((w) => `${w.label}: ${w.corrections}`), `Trend: ${stats.trend}`] : [],
-			"No coaching data yet",
-		);
-		this.addSection(
-			"Top corrections",
-			stats ? stats.topCorrections.map((t) => `"${t.span}" ×${t.count}`) : [],
-			"No corrections recorded yet",
-		);
-		this.addSection(
-			"Due vocabulary",
-			this.data.due.map((s) => `${toOneLine(s.phrase, 30)} — ${toOneLine(s.translation, 30)}`),
-			"No vocabulary captured yet",
-		);
-		this.addSection(
-			"Recent",
-			stats ? stats.recent.slice(-3).map((r) => `[${r.kind}] ${r.when} — ${r.line}`) : [],
-			"No recent blocks",
-		);
-		const hints = this.buildRecommendations();
-		this.container.addChild(
-			new Text(theme.fg("warning", `Recommendations: ${hints.join(" · ") || "keep practicing!"}`), 1, 0),
-		);
-		this.container.addChild(new Text(theme.fg("dim", "esc to close"), 1, 0));
-		this.container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-	}
+	invalidate(): void {}
 }
 
 async function openDashboardPanel(ctx: ExtensionContext): Promise<void> {
@@ -631,7 +777,6 @@ interface TranslatorDeps {
 }
 
 class TranslatorPanel {
-	private readonly container = new Container();
 	private readonly input: Input;
 	private history: Array<{ source: string; result: string }> = [];
 	private state: "idle" | "loading" | "error" | "cancelled" = "idle";
@@ -660,7 +805,6 @@ class TranslatorPanel {
 			}
 			this.deps.onClose();
 		};
-		this.rebuild();
 	}
 
 	// Focusable propagation (IME support): forward focus state to the child Input.
@@ -677,13 +821,19 @@ class TranslatorPanel {
 	}
 
 	render(width: number): string[] {
-		return this.container.render(width);
+		// Lines are composed from live state on every render. This is the core of
+		// the translator fix: the previous implementation baked state and history
+		// into a Container once in the constructor and never rebuilt it, so a
+		// completed translation never appeared.
+		try {
+			return this.buildLines(width);
+		} catch {
+			// An overlay must never throw out of render.
+			return [];
+		}
 	}
 
-	invalidate(): void {
-		// Rebuild so a theme change re-styles the pre-baked themed strings.
-		this.rebuild();
-	}
+	invalidate(): void {}
 
 	private async translate(text: string): Promise<void> {
 		const controller = new AbortController();
@@ -695,6 +845,11 @@ class TranslatorPanel {
 			const result = await this.deps.request(text, controller.signal);
 			if (controller.signal.aborted) {
 				this.state = "cancelled";
+			} else if (!result) {
+				// An empty response (e.g. an aborted run surfacing as "") must never
+				// become a history entry.
+				this.state = "error";
+				this.error = "empty response from model";
 			} else {
 				this.history.unshift({ source: text, result });
 				if (this.history.length > TRANSLATOR_HISTORY_LIMIT) this.history.pop();
@@ -714,27 +869,29 @@ class TranslatorPanel {
 		}
 	}
 
-	private rebuild(): void {
+	private buildLines(width: number): string[] {
 		const theme = this.theme;
-		this.container.clear();
-		this.container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-		this.container.addChild(
-			new Text(
-				theme.fg("accent", theme.bold(`Translate (${this.config.nativeLanguage} → ${this.config.targetLanguage})`)),
-				1,
-				0,
-			),
-		);
-		this.container.addChild(this.input);
-		this.container.addChild(new Text(theme.fg("dim", "enter translate · esc close"), 1, 0));
-		if (this.state === "loading") this.container.addChild(new Text(theme.fg("dim", "Translating…"), 1, 0));
-		if (this.state === "cancelled") this.container.addChild(new Text(theme.fg("warning", "cancelled"), 1, 0));
-		if (this.state === "error") this.container.addChild(new Text(theme.fg("error", `Error: ${this.error}`), 1, 0));
+		const card: Card = {
+			title: `Translate (${this.config.nativeLanguage} → ${this.config.targetLanguage})`,
+			body: [],
+			tone: CARD_TONE.INFO,
+		};
+		const lines = [cardTop(card, theme, width, "esc close · enter translate")];
+		const inner = cardInnerWidth(width);
+		const pushBody = (text: string) => {
+			for (const line of text.split("\n")) lines.push(cardLine(line, card.tone, theme, width));
+		};
+		for (const inputLine of this.input.render(inner)) pushBody(inputLine);
+		if (this.state === "loading") pushBody(theme.fg("dim", "Translating…"));
+		else if (this.state === "cancelled") pushBody(theme.fg("warning", "cancelled"));
+		else if (this.state === "error") pushBody(theme.fg("error", `Error: ${this.error}`));
 		for (const pair of this.history) {
-			this.container.addChild(new Text(theme.fg("muted", `▸ ${pair.source}`), 1, 0));
-			this.container.addChild(new Text(theme.fg("text", `→ ${pair.result}`), 1, 0));
+			lines.push(cardLine("", card.tone, theme, width));
+			pushBody(theme.fg("muted", `▸ ${pair.source}`));
+			pushBody(theme.fg("text", `→ ${pair.result}`));
 		}
-		this.container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		lines.push(cardBottom(card.tone, theme, width));
+		return lines;
 	}
 }
 
@@ -786,7 +943,10 @@ export default function (pi: ExtensionAPI) {
 		const config = loadConfig();
 		applyStatus(ctx, config && config.mode !== "off" ? config : null);
 		if (config && config.mode !== "off") refreshWidget(ctx);
-		else clearWidget(ctx);
+		else {
+			clearWidget(ctx);
+			unmountCoachSidebar(railTui);
+		}
 	});
 
 	pi.on("before_agent_start", async (event) => {
@@ -801,6 +961,7 @@ export default function (pi: ExtensionAPI) {
 		const config = loadConfig();
 		if (!config || config.mode === "off") {
 			clearWidget(ctx);
+			unmountCoachSidebar(railTui);
 			return;
 		}
 		const text = textFromContent(event.message.content);
@@ -809,6 +970,17 @@ export default function (pi: ExtensionAPI) {
 		const vocab = vocabFromText(text);
 		if (vocab.length > 0) appendVocab(vocab);
 		refreshWidget(ctx);
+		try {
+			// Data changed: mark the terminal-owned sidebar output stale so the
+			// fullscreen rail repaints on the next frame.
+			if (railTui) invalidateSidebar(railTui);
+		} catch {
+			// Sidebar invalidation is best-effort.
+		}
+	});
+
+	pi.on("session_shutdown", async () => {
+		unmountCoachSidebar(railTui);
 	});
 
 	// Dashboard panel and translator shortcuts. alt+c / alt+t are free: the
