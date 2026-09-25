@@ -14,6 +14,8 @@ interface CoachConfig {
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "language-coach.json");
 const LOG_PATH = join(homedir(), ".pi", "agent", "language-coach-log.jsonl");
 const DIGEST_PATH = join(homedir(), ".pi", "agent", "language-coach-digest.md");
+const VOCAB_PATH = join(homedir(), ".pi", "agent", "language-coach-vocab.jsonl");
+const VOCAB_REVIEWS_PATH = join(homedir(), ".pi", "agent", "language-coach-vocab-reviews.jsonl");
 const MODES: readonly CoachMode[] = ["on", "productivity", "off"];
 let warnedAboutConfig = false;
 
@@ -44,7 +46,7 @@ function buildOverlay(config: CoachConfig): string {
 	const lines = [
 		`## Language Coach (native: ${native} → target: ${target})`,
 		`The user is a native ${native} speaker practicing professional ${target} for software engineering work.`,
-		`- Coach block: START every reply with a blockquote block (consecutive lines starting with "> ") exactly in this shape, then a horizontal rule (---) on its own line, then a blank line, then the main response:\n  > 🎓 "the user's original message, verbatim, natural-language part only (skip code, commands, paths, logs)"\n  >\n  > ✏️ "the corrected sentence in ${target}, with the changed words wrapped in **bold**"\n  For ${native}-language input, use > 🌐 on the first line and put the natural, professional ${target} translation on the ✏️ line instead of a correction. The coach block is an explicit exception to any reply-language rule. Never translate word-by-word.`,
+		`- Coach block: START every reply with a blockquote block (consecutive lines starting with "> ") exactly in this shape, then a horizontal rule (---) on its own line, then a blank line, then the main response:\n  > 🎓 "the user's original message, verbatim, natural-language part only (skip code, commands, paths, logs)"\n  >\n  > ✏️ "the corrected sentence in ${target}, with the changed words wrapped in **bold**"\n  For ${native}-language input, use > 🌐 on the first line and put the natural, professional ${target} translation on the ✏️ line instead of a correction. After the ✏️ line, if the translation contains 1–2 notable multi-word ${target} phrases worth keeping, add one more blockquote line per phrase: > 📚 "the phrase" — ${native} gloss (never for single words, never more than two). The coach block is an explicit exception to any reply-language rule. Never translate word-by-word.`,
 		`- If the user's ${target} message is already natural: keep the 🎓 echo line, and on the ✏️ line say it is correct and optionally give at most one more natural alternative, bolding the changed words. If no alternative adds value, say so briefly. Do not invent corrections.`,
 		`- If the user writes in any other language: reply in that language; no coaching.`,
 		`- Never translate or rewrite code, commands, identifiers, logs, file paths, commit messages, or delegated artifacts.`,
@@ -283,6 +285,136 @@ function renderStats(stats: StatsSummary): string {
 	return lines.join("\n");
 }
 
+interface VocabCapture {
+	ts: string;
+	phrase: string;
+	translation: string;
+}
+
+interface VocabReview {
+	ts: string;
+	phrase: string;
+	correct: boolean;
+}
+
+interface VocabStatus {
+	phrase: string;
+	translation: string;
+	lastCorrect: string | null;
+	streak: number;
+	due: boolean;
+}
+
+// Spaced-repetition intervals (days) indexed by consecutive-correct streak,
+// clamped to the last entry.
+const VOCAB_INTERVALS = [2, 4, 7, 14, 30];
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Capture 📚 vocab lines from an assistant reply. Mechanical parse of the
+// overlay's optional third coach-block line: `> 📚 "english phrase" — gloss`.
+function vocabFromText(text: string): Array<{ phrase: string; translation: string }> {
+	const found: Array<{ phrase: string; translation: string }> = [];
+	for (const line of text.split("\n")) {
+		const t = line.trim();
+		if (!t.startsWith("> 📚")) continue;
+		const match = /^> 📚\s+"([^"]+)"\s+—\s+(.+)$/.exec(t);
+		if (!match) continue;
+		const phrase = match[1].trim();
+		const translation = match[2].trim();
+		// Phrases must be multi-word and non-empty; the gloss must be non-empty.
+		if (!phrase || !phrase.includes(" ") || !translation) continue;
+		found.push({ phrase, translation });
+	}
+	return found;
+}
+
+function appendVocab(entries: Array<{ phrase: string; translation: string }>): void {
+	try {
+		for (const e of entries) {
+			const entry = { ts: new Date().toISOString(), phrase: e.phrase, translation: e.translation, source: "translation" as const };
+			appendFileSync(VOCAB_PATH, `${JSON.stringify(entry)}\n`, "utf8");
+		}
+	} catch {
+		// Vocab capture must never break the session.
+	}
+}
+
+function parseVocabEntries(raw: string): VocabCapture[] {
+	const entries: VocabCapture[] = [];
+	for (const line of raw.split("\n")) {
+		const t = line.trim();
+		if (!t) continue;
+		try {
+			const parsed = JSON.parse(t) as Record<string, unknown>;
+			if (typeof parsed.ts === "string" && typeof parsed.phrase === "string" && typeof parsed.translation === "string") {
+				entries.push({ ts: parsed.ts, phrase: parsed.phrase, translation: parsed.translation });
+			}
+		} catch {
+			// Malformed lines never break the vocab summary.
+		}
+	}
+	return entries;
+}
+
+function parseVocabReviews(raw: string): VocabReview[] {
+	const reviews: VocabReview[] = [];
+	for (const line of raw.split("\n")) {
+		const t = line.trim();
+		if (!t) continue;
+		try {
+			const parsed = JSON.parse(t) as Record<string, unknown>;
+			if (typeof parsed.ts === "string" && typeof parsed.phrase === "string" && typeof parsed.correct === "boolean" && parseLogDate(parsed.ts)) {
+				reviews.push({ ts: parsed.ts, phrase: parsed.phrase, correct: parsed.correct });
+			}
+		} catch {
+			// Malformed lines never break the vocab summary.
+		}
+	}
+	return reviews;
+}
+
+// Pure scheduling: dedupe captures by phrase (most recent translation wins),
+// replay reviews chronologically to compute the consecutive-correct streak,
+// and mark a phrase due when it was never reviewed or the interval since its
+// last correct review has elapsed. A miss (latest review incorrect) resets
+// the streak to 0 and makes the phrase due again after one day.
+function vocabSchedule(entries: VocabCapture[], reviews: VocabReview[], now: Date): VocabStatus[] {
+	const latestTranslation = new Map<string, string>();
+	for (const e of entries) latestTranslation.set(e.phrase, e.translation);
+	const byPhrase = new Map<string, VocabReview[]>();
+	for (const r of reviews) {
+		const list = byPhrase.get(r.phrase);
+		if (list) list.push(r);
+		else byPhrase.set(r.phrase, [r]);
+	}
+	return [...latestTranslation.entries()].map(([phrase, translation]) => {
+		const list = byPhrase.get(phrase) ?? [];
+		let streak = 0;
+		let lastCorrect: string | null = null;
+		for (const r of list) {
+			if (r.correct) {
+				streak++;
+				lastCorrect = r.ts;
+			} else {
+				streak = 0;
+			}
+		}
+		if (list.length === 0) {
+			return { phrase, translation, lastCorrect, streak, due: true };
+		}
+		const latest = list[list.length - 1];
+		if (!latest.correct) {
+			const sinceMiss = now.getTime() - (parseLogDate(latest.ts)?.getTime() ?? now.getTime());
+			return { phrase, translation, lastCorrect, streak: 0, due: Math.floor(sinceMiss / DAY_MS) >= 1 };
+		}
+		// First correct review (streak 1) schedules the next review in 2 days;
+		// each further consecutive correct advances through [4, 7, 14, 30].
+		const interval = VOCAB_INTERVALS[Math.min(Math.max(streak - 1, 0), VOCAB_INTERVALS.length - 1)];
+		const sinceCorrect = now.getTime() - (parseLogDate(lastCorrect ?? latest.ts)?.getTime() ?? now.getTime());
+		return { phrase, translation, lastCorrect, streak, due: Math.floor(sinceCorrect / DAY_MS) >= interval };
+	});
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		const config = loadConfig();
@@ -300,12 +432,15 @@ export default function (pi: ExtensionAPI) {
 		if (event.message.role !== "assistant") return;
 		const config = loadConfig();
 		if (!config || config.mode === "off") return;
-		const coach = coachBlockFrom(textFromContent(event.message.content));
+		const text = textFromContent(event.message.content);
+		const coach = coachBlockFrom(text);
 		if (coach) appendLog(config, coach.block, coach.kind);
+		const vocab = vocabFromText(text);
+		if (vocab.length > 0) appendVocab(vocab);
 	});
 
 	pi.registerCommand("language", {
-		description: "Language Coach: show status, run setup, view stats, write a digest, or set mode (on | productivity | off)",
+		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, or set mode (on | productivity | off)",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim().toLowerCase();
 
@@ -357,6 +492,37 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			if (trimmed === "vocab") {
+				const config = loadConfig();
+				if (!config) {
+					ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
+					return;
+				}
+				try {
+					const raw = existsSync(VOCAB_PATH) ? readFileSync(VOCAB_PATH, "utf8") : "";
+					if (!raw.trim()) {
+						ctx.ui.notify("No vocabulary captured yet", "warning");
+						return;
+					}
+					const reviewsRaw = existsSync(VOCAB_REVIEWS_PATH) ? readFileSync(VOCAB_REVIEWS_PATH, "utf8") : "";
+					const captures = parseVocabEntries(raw);
+					const statuses = vocabSchedule(captures, parseVocabReviews(reviewsRaw), new Date());
+					const due = statuses.filter((s) => s.due).length;
+					const lines = [`Vocabulary: ${statuses.length} phrases tracked, ${due} due now`];
+					const recent = captures.slice(-5);
+					if (recent.length > 0) {
+						lines.push("Recent:");
+						for (const c of recent) lines.push(`  ${toOneLine(c.phrase)} — ${toOneLine(c.translation)}`);
+					}
+					const summary = lines.join("\n");
+					if (ctx.hasUI) ctx.ui.notify(summary, "info");
+					else console.log(summary);
+				} catch (error) {
+					ctx.ui.notify(`Language Coach: failed to compute vocabulary summary (${String(error)})`, "warning");
+				}
+				return;
+			}
+
 			if (trimmed === "digest") {
 				const config = loadConfig();
 				if (!config) {
@@ -388,6 +554,13 @@ export default function (pi: ExtensionAPI) {
 							(e) => e.kind === "correction" && (parseLogDate(e.ts)?.getTime() ?? -Infinity) > previousTs,
 						).length;
 						section.push(`Since last digest: ${since} corrections`);
+					}
+					if (existsSync(VOCAB_PATH)) {
+						const vocabRaw = readFileSync(VOCAB_PATH, "utf8");
+						const reviewsRaw = existsSync(VOCAB_REVIEWS_PATH) ? readFileSync(VOCAB_REVIEWS_PATH, "utf8") : "";
+						const statuses = vocabSchedule(parseVocabEntries(vocabRaw), parseVocabReviews(reviewsRaw), new Date());
+						const due = statuses.filter((s) => s.due).length;
+						section.push(`Vocabulary: ${statuses.length} tracked, ${due} due now`);
 					}
 					try {
 						appendFileSync(DIGEST_PATH, `${section.join("\n")}\n`, "utf8");
