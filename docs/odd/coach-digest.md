@@ -37,4 +37,11 @@ commit anywhere.
   read-only; write-failure path notifies and returns), real end-to-end
   `pi -p "/language digest"` created ~/.pi/agent/language-coach-digest.md
   with today's section and no "Since last digest" line on first run.
-- Commit: (this feature commit).
+- Commit: `b466ab2` (feature) + docs record.
+
+## Native review
+- Lineage `review-b3dbc9a97926b763`, medium tier, lens `review-reliability`,
+  candidate `df0a450..b466ab2` — **approved**, acknowledged, authority burned.
+- Eight informational advisories (7 SUGGESTION, 1 WARNING) in
+  extensions/language-coach.ts (header-scan/section-building details,
+  :383 WARNING). Recorded as later polish; none blocking.
