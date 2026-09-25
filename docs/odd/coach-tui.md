@@ -192,3 +192,88 @@ Widget colors aligned with the card roles (first line `accent`, second
   muh8q7wn-2-0gxa) + harness-proven translator fix + tsc strict clean.
 - Follow-up: report the admission-scanner defect upstream and re-run a
   fresh review on the next candidate.
+
+## Rail collapse and polish (2026-09-25)
+
+The rail got the Todos card's collapse control plus a content polish pass.
+Study sources: gentle-shell `lib/shell-todo.ts` (renderTodoCard collapsedRow),
+`lib/shell-hover.ts` (shared hover role), `extensions/gentle-todo.ts`
+(NativePointerRegion wiring), `lib/shell-sidebar-layout.ts` (dispatchPartMouse).
+
+### Collapse control (Todos-mirrored)
+
+- **Title control:** `✿ Language Coach ▾ Collapse` when expanded,
+  `▸ Expand` when collapsed; the label is dropped under width 28
+  (`${icon} ${width >= 28 ? actionLabel : ""}`), exactly like the Todos card.
+- **Mouse:** the rail object now declares `handleMouse(event)` — the
+  fullscreen layout's `dispatchPartMouse` delivers section-relative
+  coordinates to it. Mirroring gentle-todo's NativePointerRegion: a `move`
+  with `button: "none"` sets `hovered = (y === 0)` and returns
+  `{ handled: true, render: true }` on change; a left `click` with `y === 0`
+  toggles collapse. The whole title row is the control — gentle-shell does
+  not compute an x-range for the Todos control, so none was computed here.
+  Hover clears on `invalidate()` or a move elsewhere in the card; the same
+  no-leave-into-the-transcript limitation the Todos control has applies.
+  The handler is wrapped in try/catch — it never throws into the dispatch.
+- **Keyboard:** same mechanism as Todos — `pi.registerShortcut` with default
+  `ctrl+shift+l` (free: pi claims ctrl+shift+up/down/f/g, gentle-shell claims
+  ctrl+shift+t/ctrl+shift+a, the coach owns alt+c/alt+t). Env override
+  `GENTLE_PI_COACH_KEY`; `""` or `"off"` disables the shortcut and the top-rule
+  hint (click-only control).
+- **Repaint path (deliberate deviation from Todos):** gentle-todo's card has
+  no digest, so its toggle bumps the shared sidebar revision
+  (`invalidateSidebar`). The coach rail already declares a `digest()`, so
+  `collapsed` and `hovered` are folded into it instead — the section memo
+  re-renders only the coach section on toggle/hover, without the revision
+  bump that would re-render every rail section. `toggleCoachRail()` also calls
+  `railTui.requestRender()` for the shortcut path (the mouse path's
+  `{ render: true }` already triggers a frame).
+- **Collapsed render:** one summary line in place of the body (mirror of
+  `collapsedRow`): the first due phrase `phrase — gloss` when one is due,
+  else `N corrections this week · trend`, else `no coaching data yet`.
+- **Hint elision (observed):** `cardTop` shows the top-rule hint only when
+  title + hint fit. At the fixed 50-column rail width (48 content) the long
+  `Language Coach` title usually crowds out `ctrl+shift+l collapse`, so the
+  hint is often elided in the rail; the shortcut and control still work. The
+  same fit rule governs the Todos hint (which fits because "Todos" is short).
+- **State:** `railCollapsed`/`railHovered` are module-level component-local
+  state (the rail is a singleton per terminal via the marker); both reset on
+  `session_shutdown` (`unmountCoachSidebar`).
+
+### Content polish (expanded; same data sources: log, vocab, reviews)
+
+- Title subtitle: `N this week · rising|stable|improving` (Todos-style
+  `done of total` placement; N = current week's corrections).
+- Weekly stats: one line per week bucket `Sep 21–27  31`; the current week's
+  line is painted in the theme's existing `accent` role (renderCard wraps body
+  lines in the `text` role — nested `theme.fg` works, as the Todos body rows
+  already rely on).
+- Due vocabulary: `phrase — gloss` per line (max 5), review streak appended
+  when > 0 (`· streak 2`).
+- Top corrections: `span ×count` per line (max 5, span capped at 30 cols).
+- Recent: unchanged shape, max 3, already toOneLine.
+- Recommendations: tightened phrasing, joined into one line
+  (`3 due — /skill:language-drill · rising — /language digest`).
+- Roles used: text, muted (subtitle), accent (title/control idle + current
+  week), warning (hover, the shared HOVER_ROLE), border (frame). No new
+  colors.
+- `paintHoverable` is an inline mirror of gentle-shell's `lib/shell-hover.ts`
+  (HOVER_ROLE `"warning"`, idle role `"accent"`), not an import: this repo's
+  compile-time contract (`types/gentle-shell/*.d.ts` + /tmp tsconfig paths)
+  does not cover that module, and the allowed edit surfaces exclude adding a
+  stub.
+- The overlay fallback panel (`/language panel`, alt+c) renders the same
+  polished card always-expanded, without the control, keeping its
+  `esc to close` hint.
+
+### Verification
+
+- `npx --yes -p typescript@5 tsc -p /tmp/language-coach.tsconfig.json` →
+  exit 0 (strict, zero diagnostics).
+- Throwaway render probe (`/tmp/lc-card-probe.mjs`, not in the repo) against
+  the real gentle-shell `renderCard`: 24 combinations (widths 48/30/27/12/1/0
+  × collapsed × hovered) all render without throwing; inspected frames
+  confirm the control, hover role swap, accent current-week line, streak
+  suffix, and collapsed summary.
+- Runtime mouse/hover/keyboard interaction is user-owned visual testing after
+  /reload (same disposition as the v2 rail work).

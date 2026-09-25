@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { Input, matchesKey, type OverlayOptions, type TUI } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import { Input, matchesKey, type OverlayOptions, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import {
 	CARD_TONE,
 	cardBottom,
@@ -436,6 +436,24 @@ const WIDGET_ID = "language-coach";
 let widgetVisible = false;
 // Terminal whose sidebar the coach mounted (for invalidation and shutdown).
 let railTui: TUI | undefined;
+// Registered collapse keybinding (set by the extension entry point before any
+// mount can happen); undefined means click-only, no hint in the top rule.
+let railKeybinding: string | undefined;
+// Rail collapse and title-control hover state. The rail is a singleton per
+// terminal (component-local), and both reset on session_shutdown.
+let railCollapsed = false;
+let railHovered = false;
+
+function toggleCoachRail(): void {
+	railCollapsed = !railCollapsed;
+	// The digest carries the collapsed flag, so the next frame re-renders the
+	// section; requestRender is what produces that frame.
+	try {
+		railTui?.requestRender();
+	} catch {
+		// Toggling must never break the session.
+	}
+}
 
 function countCorrectionsLast7d(entries: LogEntry[], now: Date): number {
 	const cutoff = now.getTime() - 7 * DAY_MS;
@@ -521,6 +539,19 @@ const COACH_SIDEBAR_MARKER = Symbol.for("language-coach.sidebar.marker");
 // gentle-shell's "footer" shell bar when that extension is running.
 const RAIL_PART_KEY = "agents";
 
+// Rail collapse keybinding, mirroring the Todos box's mechanism: a registered
+// shortcut (default ctrl+shift+l; GENTLE_PI_COACH_KEY overrides, "" or "off"
+// disables) plus a click on the title control. ctrl+shift+l is free: pi's
+// built-ins claim ctrl+shift+up/down/f/g, gentle-shell claims ctrl+shift+t
+// (Todos) and ctrl+shift+a (Agents), and the coach already owns alt+c/alt+t.
+const RAIL_COLLAPSE_KEY_DEFAULT = "ctrl+shift+l";
+
+function railCollapseKey(env: NodeJS.ProcessEnv): string | undefined {
+	const value = env.GENTLE_PI_COACH_KEY?.trim();
+	if (value === undefined) return RAIL_COLLAPSE_KEY_DEFAULT;
+	return value === "" || value.toLowerCase() === "off" ? undefined : value;
+}
+
 interface CoachSidebarMarker {
 	installed: boolean;
 	part: SidebarRail | undefined;
@@ -552,7 +583,10 @@ function fileSignature(path: string): string {
 }
 
 function coachDigest(): string {
-	return [LOG_PATH, VOCAB_PATH, VOCAB_REVIEWS_PATH].map(fileSignature).join("|");
+	// Collapsed and hovered ride along so toggling or hovering the title
+	// control repaints through the section memo without bumping the shared
+	// sidebar revision (which would re-render every rail section).
+	return `${[LOG_PATH, VOCAB_PATH, VOCAB_REVIEWS_PATH].map(fileSignature).join("|")}|${railCollapsed ? "1" : "0"}${railHovered ? "1" : "0"}`;
 }
 
 function mountCoachSidebar(tui: TUI, theme: Theme): void {
@@ -580,18 +614,51 @@ function mountCoachSidebar(tui: TUI, theme: Theme): void {
 	const rail: SidebarRail = {
 		render(width: number): string[] {
 			try {
-				return renderCard(coachCard(loadPanelData()), theme, width, { expanded: true });
+				return renderCard(
+					coachCard(loadPanelData(), theme, width, { collapsed: railCollapsed, hovered: railHovered, collapseKey: railKeybinding }),
+					theme,
+					width,
+					{ expanded: true, hint: collapseHint(railKeybinding, railCollapsed) },
+				);
 			} catch {
 				// The rail must never take the sidebar layout down.
 				return [];
 			}
 		},
-		invalidate() {},
+		invalidate() {
+			railHovered = false;
+		},
 		digest() {
 			try {
 				return coachDigest();
 			} catch {
 				return "";
+			}
+		},
+		// Mouse wiring mirrors the Todos card's NativePointerRegion: the whole
+		// title row (y === 0) is the control -- hovering paints the shared hover
+		// role, a left click toggles collapse. The fullscreen layout's
+		// dispatchPartMouse delivers section-relative coordinates, and hover
+		// clears on invalidate or a move elsewhere in the card (the same
+		// no-leave-into-the-transcript limitation the Todos control has).
+		handleMouse(event: unknown): TuiMouseEventResult | undefined {
+			try {
+				const mouse = event as TuiMouseEvent;
+				if (mouse.type === "move" && mouse.button === "none") {
+					const next = mouse.y === 0;
+					if (next === railHovered) return { handled: true };
+					railHovered = next;
+					return { handled: true, render: true };
+				}
+				if (mouse.type === "click") {
+					if (mouse.button !== "left" || mouse.y !== 0) return undefined;
+					toggleCoachRail();
+					return { handled: true, render: true };
+				}
+				return undefined;
+			} catch {
+				// Mouse handling must never throw into the layout dispatch.
+				return undefined;
 			}
 		},
 	};
@@ -617,6 +684,8 @@ function unmountCoachSidebar(tui: TUI | undefined): void {
 		marker.part = undefined;
 		marker.uninstall = undefined;
 		marker.installed = false;
+		railCollapsed = false;
+		railHovered = false;
 	}
 	if (railTui === tui) railTui = undefined;
 }
@@ -625,16 +694,34 @@ function unmountCoachSidebar(tui: TUI | undefined): void {
 // Dashboard card (shared by the rail and the overlay fallback)
 // ---------------------------------------------------------------------------
 
+// Inline mirror of gentle-shell's lib/shell-hover.ts: one shared role swap on
+// hover for every clickable surface, so the collapse control reads the same
+// way as every other clickable text. Not imported because this repo's
+// compile-time contract (types/gentle-shell/*.d.ts) does not cover that module.
+const HOVER_ROLE = "warning" as const;
+
+function paintHoverable(theme: Theme, text: string, hovered: boolean, idleRole?: ThemeColor): string {
+	if (hovered) return theme.fg(HOVER_ROLE, text);
+	return idleRole === undefined ? text : theme.fg(idleRole, text);
+}
+
+// Right-aligned hint for the card's top rule, mirroring the Todos card:
+// `<key> collapse` when expanded, `<key> expand` when collapsed, and no hint
+// at all when the keybinding is disabled.
+function collapseHint(collapseKey: string | undefined, collapsed: boolean): string | undefined {
+	return collapseKey ? `${collapseKey} ${collapsed ? "expand" : "collapse"}` : undefined;
+}
+
 function recommendations(data: PanelData): string[] {
 	const hints: string[] = [];
 	if (data.dueTotal > 0) {
-		hints.push(`${data.dueTotal} phrase${data.dueTotal === 1 ? "" : "s"} due — run /skill:language-drill`);
+		hints.push(`${data.dueTotal} due — /skill:language-drill`);
 	}
 	if (data.stats?.trend === "rising") {
-		hints.push("corrections rising — run /language digest to snapshot progress");
+		hints.push("rising — /language digest");
 	}
 	if (!data.stats || data.stats.kinds.correction === 0) {
-		hints.push("no corrections yet — try /skill:language-interview");
+		hints.push("no corrections yet — /skill:language-interview");
 	}
 	return hints;
 }
@@ -648,25 +735,48 @@ function addCardSection(body: string[], title: string, lines: string[], empty: s
 	for (const line of lines) body.push(`  ${line}`);
 }
 
-function coachCard(data: PanelData): Card {
+interface CoachCardOptions {
+	collapsed: boolean;
+	hovered: boolean;
+	collapseKey: string | undefined;
+}
+
+// One compact line per displayed week bucket; the current (last) bucket
+// carries the theme's accent role — an existing role, no new colors.
+function weeklyRows(stats: StatsSummary, theme: Theme): string[] {
+	return stats.weeks.map((week, index) => {
+		const line = `${week.label}  ${week.corrections}`;
+		return index === stats.weeks.length - 1 ? theme.fg("accent", line) : line;
+	});
+}
+
+// Mirror of the Todos card's collapsedRow(): the most relevant compact line —
+// a due phrase when one is due, else this week's summary.
+function collapsedCoachRow(data: PanelData): string {
+	const due = data.due[0];
+	if (due) return `${toOneLine(due.phrase, 30)} — ${toOneLine(due.translation, 30)}`;
+	if (data.stats) return `${data.stats.weeks[3].corrections} corrections this week · ${data.stats.trend}`;
+	return "no coaching data yet";
+}
+
+function expandedCoachBody(data: PanelData, theme: Theme): string[] {
 	const stats = data.stats;
 	const body: string[] = [];
 	if (stats) {
-		body.push(stats.weeks.map((w) => `${w.label}: ${w.corrections}`).join(" · "));
-		body.push(`Trend: ${stats.trend}`);
+		for (const line of weeklyRows(stats, theme)) body.push(line);
 	} else {
 		body.push("No coaching data yet");
 	}
 	addCardSection(
 		body,
 		"Due vocabulary",
-		data.due.map((s) => `${toOneLine(s.phrase, 30)} — ${toOneLine(s.translation, 30)}`),
+		data.due.map((s) => `${toOneLine(s.phrase, 30)} — ${toOneLine(s.translation, 30)}${s.streak > 0 ? ` · streak ${s.streak}` : ""}`),
 		"No vocabulary captured yet",
 	);
 	addCardSection(
 		body,
 		"Top corrections",
-		stats ? stats.topCorrections.map((t) => `"${t.span}" ×${t.count}`) : [],
+		stats ? stats.topCorrections.map((t) => `${toOneLine(t.span, 30)} ×${t.count}`) : [],
 		"No corrections recorded yet",
 	);
 	addCardSection(
@@ -675,8 +785,27 @@ function coachCard(data: PanelData): Card {
 		stats ? stats.recent.slice(-3).map((r) => `[${r.kind}] ${r.when} — ${r.line}`) : [],
 		"No recent blocks",
 	);
-	addCardSection(body, "Recommendations", recommendations(data), "keep practicing!");
-	return { title: "Language Coach", body, tone: CARD_TONE.INFO };
+	const hints = recommendations(data);
+	addCardSection(body, "Recommendations", hints.length > 0 ? [hints.join(" · ")] : [], "keep practicing!");
+	return body;
+}
+
+function coachCard(data: PanelData, theme: Theme, width: number, options: CoachCardOptions): Card {
+	const stats = data.stats;
+	// The title control mirrors the Todos card: `▾ Collapse` when expanded,
+	// `▸ Expand` when collapsed, the label dropped under width 28, painted in
+	// the shared hover role while hovered (idle role matches the INFO title's
+	// own accent role).
+	const action = options.collapsed ? "expand" : "collapse";
+	const actionLabel = action[0]!.toUpperCase() + action.slice(1);
+	const icon = options.collapsed ? "▸" : "▾";
+	const control = `${icon} ${width >= 28 ? actionLabel : ""}`.trimEnd();
+	return {
+		title: `Language Coach ${paintHoverable(theme, control, options.hovered, "accent")}`,
+		subtitle: stats ? `${stats.weeks[3].corrections} this week · ${stats.trend}` : undefined,
+		body: options.collapsed ? [collapsedCoachRow(data)] : expandedCoachBody(data, theme),
+		tone: CARD_TONE.INFO,
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -730,12 +859,15 @@ class CoachPanel {
 
 	render(width: number): string[] {
 		// Lines are composed from live state on every render; no cached children
-		// to invalidate. Same card look as the persistent rail.
+		// to invalidate. Same card look as the persistent rail, always expanded
+		// (the overlay has no collapse control).
 		try {
-			return renderCard(coachCard(this.data), this.theme, width, {
-				expanded: true,
-				hint: "esc to close",
-			});
+			return renderCard(
+				coachCard(this.data, this.theme, width, { collapsed: false, hovered: false, collapseKey: undefined }),
+				this.theme,
+				width,
+				{ expanded: true, hint: "esc to close" },
+			);
 		} catch {
 			// An overlay must never throw out of render.
 			return [];
@@ -938,7 +1070,19 @@ async function openTranslator(ctx: ExtensionContext, config: CoachConfig): Promi
 	}, { overlay: true, overlayOptions: () => options });
 }
 
-export default function (pi: ExtensionAPI) {
+export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env) {
+	const collapseKey = railCollapseKey(env);
+	railKeybinding = collapseKey;
+
+	if (collapseKey) {
+		pi.registerShortcut(collapseKey as Parameters<ExtensionAPI["registerShortcut"]>[0], {
+			description: "Language Coach: collapse or expand the dashboard rail",
+			handler: async () => {
+				toggleCoachRail();
+			},
+		});
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		const config = loadConfig();
 		applyStatus(ctx, config && config.mode !== "off" ? config : null);
