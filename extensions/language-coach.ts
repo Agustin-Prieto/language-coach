@@ -684,19 +684,25 @@ function addCardSection(body: string[], title: string, lines: string[], empty: s
 	for (const line of lines) body.push(`  ${line}`);
 }
 
+const PREPOSITION_SPANS = new Set(["in", "on", "at", "to", "for", "over"]);
+
+// Pure heuristic mapping a recurring corrected span to one short, actionable
+// recommendation. No model, no fs: derives everything from the span itself so
+// it stays trivially testable.
+export function errorRecommendation(span: string, count: number): string {
+	if (span === "i") return `Capitalize "I" in every sentence.`;
+	if (PREPOSITION_SPANS.has(span)) {
+		return `Double-check prepositions — write the phrase, then verify the preposition.`;
+	}
+	if (span === "let's") return `Use "let's" for suggestions; avoid "let us" in speech.`;
+	if (!span.includes(" ") && span.endsWith("ly")) return `Check adjective vs adverb after verbs.`;
+	return `Practice "${span}" — it is your most frequent fix (×${count}).`;
+}
+
 interface CoachCardOptions {
 	collapsed: boolean;
 	hovered: boolean;
 	collapseKey: string | undefined;
-}
-
-// One compact line per displayed week bucket; the current (last) bucket
-// carries the theme's accent role — an existing role, no new colors.
-function weeklyRows(stats: StatsSummary, theme: Theme): string[] {
-	return stats.weeks.map((week, index) => {
-		const line = `${week.label}  ${week.corrections}`;
-		return index === stats.weeks.length - 1 ? theme.fg("accent", line) : line;
-	});
 }
 
 // Mirror of the Todos card's collapsedRow(): the most relevant compact line —
@@ -708,32 +714,34 @@ function collapsedCoachRow(data: PanelData): string {
 	return "no coaching data yet";
 }
 
-function expandedCoachBody(data: PanelData, theme: Theme): string[] {
+// Slim, error-focused body (2026-09-25 slim-down): common errors with one
+// recommendation each, compact due vocabulary, and a single final hint line.
+// Weekly buckets and the Recent section were removed; the trend stays visible
+// in the card subtitle and /language stats.
+function expandedCoachBody(data: PanelData): string[] {
 	const stats = data.stats;
 	const body: string[] = [];
-	if (stats) {
-		for (const line of weeklyRows(stats, theme)) body.push(line);
+	body.push("", "Common errors");
+	const top = stats ? stats.topCorrections.slice(0, 4) : [];
+	if (top.length === 0) {
+		body.push("  No corrections recorded yet");
 	} else {
-		body.push("No coaching data yet");
+		for (const t of top) {
+			body.push(`  ${toOneLine(t.span, 30)} ×${t.count}`);
+			body.push(`  ${errorRecommendation(t.span, t.count)}`);
+		}
 	}
-	addCardSection(
-		body,
-		"Due vocabulary",
-		data.due.map((s) => `${toOneLine(s.phrase, 30)} — ${toOneLine(s.translation, 30)}${s.streak > 0 ? ` · streak ${s.streak}` : ""}`),
-		"No vocabulary captured yet",
-	);
-	addCardSection(
-		body,
-		"Top corrections",
-		stats ? stats.topCorrections.map((t) => `${toOneLine(t.span, 30)} ×${t.count}`) : [],
-		"No corrections recorded yet",
-	);
-	addCardSection(
-		body,
-		"Recent",
-		stats ? stats.recent.slice(-3).map((r) => `[${r.kind}] ${r.when} — ${r.line}`) : [],
-		"No recent blocks",
-	);
+	body.push("", "Vocabulary");
+	if (data.trackedTotal === 0) {
+		body.push("  No vocabulary captured yet");
+	} else if (data.dueTotal === 0) {
+		body.push("  All caught up");
+	} else {
+		body.push(`  ${data.dueTotal} due now`);
+		for (const s of data.due.slice(0, 2)) {
+			body.push(`  ${toOneLine(s.phrase, 30)} — ${toOneLine(s.translation, 30)}`);
+		}
+	}
 	const hints = recommendations(data);
 	addCardSection(body, "Recommendations", hints.length > 0 ? [hints.join(" · ")] : [], "keep practicing!");
 	return body;
@@ -752,7 +760,7 @@ function coachCard(data: PanelData, theme: Theme, width: number, options: CoachC
 	return {
 		title: `Language Coach ${paintHoverable(theme, control, options.hovered, "accent")}`,
 		subtitle: stats?.weeks.length ? `${stats.weeks.at(-1)!.corrections} this week · ${stats.trend}` : undefined,
-		body: options.collapsed ? [collapsedCoachRow(data)] : expandedCoachBody(data, theme),
+		body: options.collapsed ? [collapsedCoachRow(data)] : expandedCoachBody(data),
 		tone: CARD_TONE.INFO,
 	};
 }
@@ -767,10 +775,11 @@ interface PanelData {
 	stats: StatsSummary | null;
 	due: VocabStatus[];
 	dueTotal: number;
+	trackedTotal: number;
 }
 
 function loadPanelData(): PanelData {
-	const data: PanelData = { stats: null, due: [], dueTotal: 0 };
+	const data: PanelData = { stats: null, due: [], dueTotal: 0, trackedTotal: 0 };
 	try {
 		if (existsSync(LOG_PATH)) {
 			const { entries } = parseLogEntries(readFileSync(LOG_PATH, "utf8"));
@@ -783,9 +792,11 @@ function loadPanelData(): PanelData {
 		if (existsSync(VOCAB_PATH)) {
 			const captures = parseVocabEntries(readFileSync(VOCAB_PATH, "utf8"));
 			const reviews = existsSync(VOCAB_REVIEWS_PATH) ? parseVocabReviews(readFileSync(VOCAB_REVIEWS_PATH, "utf8")) : [];
-			const statuses = vocabSchedule(captures, reviews, new Date()).filter((s) => s.due);
-			data.dueTotal = statuses.length;
-			data.due = statuses.slice(0, 5);
+			const statuses = vocabSchedule(captures, reviews, new Date());
+			data.trackedTotal = statuses.length;
+			const dueStatuses = statuses.filter((s) => s.due);
+			data.dueTotal = dueStatuses.length;
+			data.due = dueStatuses.slice(0, 5);
 		}
 	} catch {
 		// Vocab load failure renders the panel's empty vocab section.

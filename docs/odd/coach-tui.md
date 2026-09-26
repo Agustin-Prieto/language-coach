@@ -322,3 +322,44 @@ Kept, unchanged:
 The `message_end` data flow is unchanged except the widget: log and vocab
 writes still happen, and the rail still repaints through its digest plus the
 explicit invalidation.
+
+## Rail slim-down (2026-09-25)
+
+**User decision:** the expanded rail carried too much information; the coach
+rail should be slimmer and centered on recommendations derived from the
+user's common errors.
+
+### New expanded layout (in this order, everything else removed)
+
+1. Card title "Language Coach" + subtitle as before (`N this week · trend`).
+2. Section **Common errors** — the top recurring correction spans from the
+   log (up to 4, same `span ×count` shape as the previous Top corrections
+   data), each followed by ONE short recommendation line produced by a small
+   pure-function heuristic.
+3. Section **Vocabulary** — compact: one line `N due now` plus up to 2 due
+   phrases (`phrase — gloss`); "No vocabulary captured yet" when nothing is
+   tracked, "All caught up" when tracked but none due.
+4. Final **Recommendations** line — unchanged drill/digest/interview hint
+   logic, still joined into one line ("keep practicing!" when empty).
+
+Removed: the per-week bucket lines (`weeklyRows`), the "Recent" section, the
+review-streak suffix, and the old "No coaching data yet" placeholder (the
+empty-log case now shows "No corrections recorded yet"). The collapsed
+one-line summary is unchanged.
+
+### Recommendation heuristic
+
+`errorRecommendation(span, count)` (exported pure function in
+`extensions/language-coach.ts`; no model, no fs):
+
+- span `"i"` → `Capitalize "I" in every sentence.`
+- span in {in, on, at, to, for, over} → `Double-check prepositions — write
+  the phrase, then verify the preposition.`
+- span `"let's"` → `Use "let's" for suggestions; avoid "let us" in speech.`
+- single word ending in `ly` → `Check adjective vs adverb after verbs.`
+- otherwise → `Practice "<span>" — it is your most frequent fix (×N).`
+
+The weekly trend remains visible in the card subtitle and in
+`/language stats` (which keeps its full weekly breakdown and Recent list).
+`loadPanelData` now also exposes `trackedTotal` to distinguish "no
+vocabulary captured" from "all caught up".
