@@ -383,3 +383,17 @@ vocabulary captured" from "all caught up".
 - The rail body now ends with the Vocabulary section; title/subtitle, Common
   errors with learned tips, collapse control, digest, coexistence, and the
   never-throw render are unchanged.
+
+## Translator panel removed (2026-09-26)
+- User decision: drop the translator panel entirely. The direct-model-call
+  experiment is retired; translation stays the coach's 🌐/📚 block workflow.
+- Removed from `extensions/language-coach.ts`: `TranslatorPanel`,
+  `TranslatorDeps`, `openTranslator`, `TRANSLATOR_MAX_WIDTH`,
+  `TRANSLATOR_HISTORY_LIMIT`, the `/language translate` command branch, the
+  `alt+t` registerShortcut, and now-unused imports (`Input` from pi-tui —
+  `matchesKey` stays for the dashboard panel's esc handling — plus the
+  `cardTop` / `cardInnerWidth` / `cardLine` / `cardBottom` card helpers).
+- The `/language` command description and its usage line drop `translate`.
+- Unchanged: rail, dashboard fallback panel (`/language panel` + `alt+c`),
+  commands, logging/capture/digest, and the remaining handlers'
+  never-throw policies.

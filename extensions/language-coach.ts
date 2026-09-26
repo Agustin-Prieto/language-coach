@@ -1,11 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { Input, matchesKey, type OverlayOptions, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { matchesKey, type OverlayOptions, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import {
 	CARD_TONE,
-	cardBottom,
-	cardInnerWidth,
-	cardLine,
-	cardTop,
 	renderCard,
 	type Card,
 } from "gentle-shell-lib/shell-card.ts";
@@ -581,7 +577,7 @@ const RAIL_PART_KEY = "agents";
 // shortcut (default ctrl+shift+l; GENTLE_PI_COACH_KEY overrides, "" or "off"
 // disables) plus a click on the title control. ctrl+shift+l is free: pi's
 // built-ins claim ctrl+shift+up/down/f/g, gentle-shell claims ctrl+shift+t
-// (Todos) and ctrl+shift+a (Agents), and the coach already owns alt+c/alt+t.
+// (Todos) and ctrl+shift+a (Agents), and the coach already owns alt+c.
 const RAIL_COLLAPSE_KEY_DEFAULT = "ctrl+shift+l";
 
 function railCollapseKey(env: NodeJS.ProcessEnv): string | undefined {
@@ -928,181 +924,6 @@ async function openDashboardPanel(ctx: ExtensionContext): Promise<void> {
 	}, { overlay: true, overlayOptions: () => options });
 }
 
-// ---------------------------------------------------------------------------
-// Translator panel (overlay, direct model call)
-// ---------------------------------------------------------------------------
-
-const TRANSLATOR_MAX_WIDTH = 60;
-const TRANSLATOR_HISTORY_LIMIT = 5;
-
-interface TranslatorDeps {
-	request: (text: string, signal: AbortSignal) => Promise<string>;
-	requestRender: () => void;
-	onClose: () => void;
-}
-
-class TranslatorPanel {
-	private readonly input: Input;
-	private history: Array<{ source: string; result: string }> = [];
-	private state: "idle" | "loading" | "error" | "cancelled" = "idle";
-	private error = "";
-	private controller: AbortController | null = null;
-	private focusedInternal = false;
-
-	constructor(private readonly theme: Theme, private readonly config: CoachConfig, private readonly deps: TranslatorDeps) {
-		this.input = new Input({ prompt: "> " });
-		this.input.onSubmit = (value) => {
-			const text = value.trim();
-			// Empty input submits nothing; a request in flight is never stacked.
-			if (!text || this.state === "loading") return;
-			this.input.setValue("");
-			void this.translate(text);
-		};
-		this.input.onEscape = () => {
-			// Esc while a request is in flight aborts it and keeps the panel open
-			// so the "cancelled" state is visible; otherwise esc closes the panel.
-			if (this.controller) {
-				this.controller.abort();
-				this.controller = null;
-				this.state = "cancelled";
-				this.deps.requestRender();
-				return;
-			}
-			this.deps.onClose();
-		};
-	}
-
-	// Focusable propagation (IME support): forward focus state to the child Input.
-	get focused(): boolean {
-		return this.focusedInternal;
-	}
-	set focused(value: boolean) {
-		this.focusedInternal = value;
-		this.input.focused = value;
-	}
-
-	handleInput(data: string): void {
-		this.input.handleInput(data);
-	}
-
-	render(width: number): string[] {
-		// Lines are composed from live state on every render. This is the core of
-		// the translator fix: the previous implementation baked state and history
-		// into a Container once in the constructor and never rebuilt it, so a
-		// completed translation never appeared.
-		try {
-			return this.buildLines(width);
-		} catch {
-			// An overlay must never throw out of render.
-			return [];
-		}
-	}
-
-	invalidate(): void {}
-
-	private async translate(text: string): Promise<void> {
-		const controller = new AbortController();
-		this.controller = controller;
-		this.state = "loading";
-		this.error = "";
-		this.deps.requestRender();
-		try {
-			const result = await this.deps.request(text, controller.signal);
-			if (controller.signal.aborted) {
-				this.state = "cancelled";
-			} else if (!result) {
-				// An empty response (e.g. an aborted run surfacing as "") must never
-				// become a history entry.
-				this.state = "error";
-				this.error = "empty response from model";
-			} else {
-				this.history.unshift({ source: text, result });
-				if (this.history.length > TRANSLATOR_HISTORY_LIMIT) this.history.pop();
-				this.state = "idle";
-			}
-		} catch (error) {
-			// Provider, auth, and request errors render inline; never throw out of the component.
-			if (controller.signal.aborted) {
-				this.state = "cancelled";
-			} else {
-				this.state = "error";
-				this.error = error instanceof Error ? error.message : String(error);
-			}
-		} finally {
-			if (this.controller === controller) this.controller = null;
-			this.deps.requestRender();
-		}
-	}
-
-	private buildLines(width: number): string[] {
-		const theme = this.theme;
-		const card: Card = {
-			title: `Translate (${this.config.nativeLanguage} → ${this.config.targetLanguage})`,
-			body: [],
-			tone: CARD_TONE.INFO,
-		};
-		const lines = [cardTop(card, theme, width, "esc close · enter translate")];
-		const inner = cardInnerWidth(width);
-		const pushBody = (text: string) => {
-			for (const line of text.split("\n")) lines.push(cardLine(line, card.tone, theme, width));
-		};
-		for (const inputLine of this.input.render(inner)) pushBody(inputLine);
-		if (this.state === "loading") pushBody(theme.fg("dim", "Translating…"));
-		else if (this.state === "cancelled") pushBody(theme.fg("warning", "cancelled"));
-		else if (this.state === "error") pushBody(theme.fg("error", `Error: ${this.error}`));
-		for (const pair of this.history) {
-			lines.push(cardLine("", card.tone, theme, width));
-			pushBody(theme.fg("muted", `▸ ${pair.source}`));
-			pushBody(theme.fg("text", `→ ${pair.result}`));
-		}
-		lines.push(cardBottom(card.tone, theme, width));
-		return lines;
-	}
-}
-
-async function openTranslator(ctx: ExtensionContext, config: CoachConfig): Promise<void> {
-	const runRequest = async (text: string, signal: AbortSignal): Promise<string> => {
-		// Direct pi-ai call through the active model; nothing touches the session
-		// context, so translations never enter the transcript or coach log.
-		const model = ctx.model;
-		if (!model) throw new Error("no active model; select one with /model");
-		const provider = ctx.modelRegistry.getProvider(model.provider);
-		if (!provider) throw new Error(`provider "${model.provider}" not available`);
-		const auth = await ctx.modelRegistry.getProviderAuth(model.provider);
-		if (!auth) throw new Error(`no authentication configured for provider "${model.provider}"`);
-		const messages = [
-			{
-				role: "user" as const,
-				content: `Translate the following ${config.nativeLanguage} text to ${config.targetLanguage}. Output ONLY the translation, no quotes, no notes.\n\n${text}`,
-				timestamp: Date.now(),
-			},
-		];
-		const response = await ctx.modelRegistry.complete(model, { messages }, { signal });
-		if (response.stopReason === "aborted") return "";
-		return response.content
-			.filter((c): c is { type: "text"; text: string } => c.type === "text")
-			.map((c) => c.text)
-			.join("")
-			.trim();
-	};
-
-	let options: OverlayOptions = { anchor: "center", width: TRANSLATOR_MAX_WIDTH, margin: 1, maxHeight: "80%" };
-	await ctx.ui.custom((tui, theme, _keybindings, done) => {
-		const cols = tui.terminal.columns;
-		options = {
-			anchor: "center",
-			width: Math.max(32, Math.min(TRANSLATOR_MAX_WIDTH, cols - 4)),
-			margin: 1,
-			maxHeight: "80%",
-		};
-		return new TranslatorPanel(theme, config, {
-			request: runRequest,
-			requestRender: () => tui.requestRender(),
-			onClose: () => done(undefined),
-		});
-	}, { overlay: true, overlayOptions: () => options });
-}
-
 export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env) {
 	const collapseKey = railCollapseKey(env);
 	railKeybinding = collapseKey;
@@ -1161,9 +982,9 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 		unmountCoachSidebar(railTui);
 	});
 
-	// Dashboard panel and translator shortcuts. alt+c / alt+t are free: the
-	// built-in keymap (docs/keybindings.md) claims alt+b/f/d/y/v/q, alt+arrows,
-	// alt+enter/backspace/delete, and ctrl+<letter> combos, but no alt+c/alt+t.
+	// Dashboard panel shortcut. alt+c is free: the built-in keymap
+	// (docs/keybindings.md) claims alt+b/f/d/y/v/q, alt+arrows,
+	// alt+enter/backspace/delete, and ctrl+<letter> combos, but no alt+c.
 	pi.registerShortcut("alt+c", {
 		description: "Language Coach: open the dashboard panel",
 		handler: async (ctx) => {
@@ -1175,24 +996,8 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 		},
 	});
 
-	pi.registerShortcut("alt+t", {
-		description: "Language Coach: open the translator panel",
-		handler: async (ctx) => {
-			if (!ctx.hasUI) {
-				console.log("Translator requires the TUI");
-				return;
-			}
-			const config = loadConfig();
-			if (!config) {
-				ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
-				return;
-			}
-			await openTranslator(ctx, config);
-		},
-	});
-
 	pi.registerCommand("language", {
-		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, open the dashboard panel or translator, or set mode (on | productivity | off)",
+		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, open the dashboard panel, or set mode (on | productivity | off)",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim().toLowerCase();
 
@@ -1338,22 +1143,8 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 				return;
 			}
 
-			if (trimmed === "translate") {
-				if (!ctx.hasUI) {
-					console.log("Translator requires the TUI");
-					return;
-				}
-				const config = loadConfig();
-				if (!config) {
-					ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
-					return;
-				}
-				await openTranslator(ctx, config);
-				return;
-			}
-
 			if (!MODES.includes(trimmed as CoachMode)) {
-				ctx.ui.notify("Usage: /language [on | productivity | off | panel | translate] (no args shows status or runs setup)", "warning");
+				ctx.ui.notify("Usage: /language [on | productivity | off | panel] (no args shows status or runs setup)", "warning");
 				return;
 			}
 
