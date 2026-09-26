@@ -363,3 +363,10 @@ The weekly trend remains visible in the card subtitle and in
 `/language stats` (which keeps its full weekly breakdown and Recent list).
 `loadPanelData` now also exposes `trackedTotal` to distinguish "no
 vocabulary captured" from "all caught up".
+
+## Review (rail slim-down, 2026-09-25)
+- Lineage `review-d9113bb41cc5268a`, medium, lens review-reliability —
+  **approved** with one informational SUGGESTION (heuristic coverage at
+  :691), acknowledged, authority burned.
+- Pre-existing follow-up still open: unguarded `weeks[3]` in renderStats
+  (~:290) from the original stats feature.
