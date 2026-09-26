@@ -370,3 +370,16 @@ vocabulary captured" from "all caught up".
   :691), acknowledged, authority burned.
 - Pre-existing follow-up still open: unguarded `weeks[3]` in renderStats
   (~:290) from the original stats feature.
+
+## Recommendations section removed (2026-09-26)
+- User decision: drop the final Recommendations hint line from the expanded
+  coach rail body; the rail should end with the Vocabulary section.
+- Removed from `expandedCoachBody` in `extensions/language-coach.ts`: the
+  `Recommendations` card section and its helpers — the `recommendations()`
+  hint-selection function (drill/digest/interview hints) and the
+  `addCardSection()` body-append helper, both now unused elsewhere (verified
+  by grep before deletion). `errorRecommendation()` stays: it still feeds the
+  per-error fallback tips in Common errors.
+- The rail body now ends with the Vocabulary section; title/subtitle, Common
+  errors with learned tips, collapse control, digest, coexistence, and the
+  never-throw render are unchanged.

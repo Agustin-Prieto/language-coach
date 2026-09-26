@@ -750,29 +750,6 @@ function collapseHint(collapseKey: string | undefined, collapsed: boolean): stri
 	return collapseKey ? `${collapseKey} ${collapsed ? "expand" : "collapse"}` : undefined;
 }
 
-function recommendations(data: PanelData): string[] {
-	const hints: string[] = [];
-	if (data.dueTotal > 0) {
-		hints.push(`${data.dueTotal} due — /skill:language-drill`);
-	}
-	if (data.stats?.trend === "rising") {
-		hints.push("rising — /language digest");
-	}
-	if (!data.stats || data.stats.kinds.correction === 0) {
-		hints.push("no corrections yet — /skill:language-interview");
-	}
-	return hints;
-}
-
-function addCardSection(body: string[], title: string, lines: string[], empty: string): void {
-	body.push("", title);
-	if (lines.length === 0) {
-		body.push(`  ${empty}`);
-		return;
-	}
-	for (const line of lines) body.push(`  ${line}`);
-}
-
 const PREPOSITION_SPANS = new Set(["in", "on", "at", "to", "for", "over"]);
 
 // Pure heuristic mapping a recurring corrected span to one short, actionable
@@ -804,9 +781,9 @@ function collapsedCoachRow(data: PanelData): string {
 }
 
 // Slim, error-focused body (2026-09-25 slim-down): common errors with one
-// recommendation each, compact due vocabulary, and a single final hint line.
-// Weekly buckets and the Recent section were removed; the trend stays visible
-// in the card subtitle and /language stats.
+// recommendation each and compact due vocabulary. Weekly buckets, the Recent
+// section, and the final Recommendations hint line (removed 2026-09-26) are
+// gone; the trend stays visible in the card subtitle and /language stats.
 function expandedCoachBody(data: PanelData, width: number): string[] {
 	const stats = data.stats;
 	const body: string[] = [];
@@ -834,8 +811,6 @@ function expandedCoachBody(data: PanelData, width: number): string[] {
 			body.push(`  ${toOneLine(s.phrase, 30)} — ${toOneLine(s.translation, 30)}`);
 		}
 	}
-	const hints = recommendations(data);
-	addCardSection(body, "Recommendations", hints.length > 0 ? [hints.join(" · ")] : [], "keep practicing!");
 	return body;
 }
 
