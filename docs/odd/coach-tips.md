@@ -43,3 +43,8 @@ correction, captured mechanically and shown under each top error on the rail.
   match the existing body style (no note/dim distinction) — flagged by the
   implementer, accepted.
 - Commit: (this feature commit).
+
+## Review (learned tips, 2026-09-26)
+- Lineage `review-d5a4f78eb544cb11`, medium, lens review-reliability —
+  **approved** with zero findings, acknowledged, authority burned.
+- Known accepted deviation stands (single body role for tip lines).
