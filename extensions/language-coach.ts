@@ -28,6 +28,7 @@ const LOG_PATH = join(homedir(), ".pi", "agent", "language-coach-log.jsonl");
 const DIGEST_PATH = join(homedir(), ".pi", "agent", "language-coach-digest.md");
 const VOCAB_PATH = join(homedir(), ".pi", "agent", "language-coach-vocab.jsonl");
 const VOCAB_REVIEWS_PATH = join(homedir(), ".pi", "agent", "language-coach-vocab-reviews.jsonl");
+const TIPS_PATH = join(homedir(), ".pi", "agent", "language-coach-tips.jsonl");
 const MODES: readonly CoachMode[] = ["on", "productivity", "off"];
 let warnedAboutConfig = false;
 
@@ -58,7 +59,7 @@ function buildOverlay(config: CoachConfig): string {
 	const lines = [
 		`## Language Coach (native: ${native} → target: ${target})`,
 		`The user is a native ${native} speaker practicing professional ${target} for software engineering work.`,
-		`- Coach block: START every reply with a blockquote block (consecutive lines starting with "> ") exactly in this shape, then a horizontal rule (---) on its own line, then a blank line, then the main response:\n  > 🎓 "the user's original message, verbatim, natural-language part only (skip code, commands, paths, logs)"\n  >\n  > ✏️ "the corrected sentence in ${target}, with the changed words wrapped in **bold**"\n  For ${native}-language input, use > 🌐 on the first line and put the natural, professional ${target} translation on the ✏️ line instead of a correction. After the ✏️ line, if the translation contains 1–2 notable multi-word ${target} phrases worth keeping, add one more blockquote line per phrase: > 📚 "the phrase" — ${native} gloss (never for single words, never more than two). The coach block is an explicit exception to any reply-language rule. Never translate word-by-word.`,
+		`- Coach block: START every reply with a blockquote block (consecutive lines starting with "> ") exactly in this shape, then a horizontal rule (---) on its own line, then a blank line, then the main response:\n  > 🎓 "the user's original message, verbatim, natural-language part only (skip code, commands, paths, logs)"\n  >\n  > ✏️ "the corrected sentence in ${target}, with the changed words wrapped in **bold**". After the ✏️ line, when the correction reveals a generalizable pattern, add one more blockquote line: > 💡 <tip about the pattern, max 12 words> — only for reusable rules, never for typos or one-off mistakes.\n  For ${native}-language input, use > 🌐 on the first line and put the natural, professional ${target} translation on the ✏️ line instead of a correction. After the ✏️ line, if the translation contains 1–2 notable multi-word ${target} phrases worth keeping, add one more blockquote line per phrase: > 📚 "the phrase" — ${native} gloss (never for single words, never more than two). The coach block is an explicit exception to any reply-language rule. Never translate word-by-word.`,
 		`- If the user's ${target} message is already natural: keep the 🎓 echo line, and on the ✏️ line say it is correct and optionally give at most one more natural alternative, bolding the changed words. If no alternative adds value, say so briefly. Do not invent corrections.`,
 		`- If the user writes in any other language: reply in that language; no coaching.`,
 		`- Never translate or rewrite code, commands, identifiers, logs, file paths, commit messages, or delegated artifacts.`,
@@ -368,6 +369,94 @@ function parseVocabEntries(raw: string): VocabCapture[] {
 	return entries;
 }
 
+interface TipRecord {
+	ts: string;
+	span: string;
+	tip: string;
+}
+
+interface TipCapture {
+	span: string;
+	tip: string;
+}
+
+// Capture 💡 tip lines from a correction coach block, pairing each tip with
+// the first **bold** span of the block's ✏️ line (same regex family as
+// extractBoldSpans). Blocks without 💡 lines or without a bold span capture
+// nothing.
+function tipsFromBlock(block: string): TipCapture[] {
+	const lines = block.split("\n").map((l) => l.trim());
+	const editLine = lines.find((l) => l.startsWith("> ✏️"));
+	if (!editLine) return [];
+	const bold = /\*\*([^*]+)\*\*/.exec(editLine);
+	if (!bold) return [];
+	const span = bold[1].trim();
+	if (!span) return [];
+	const tips: TipCapture[] = [];
+	for (const line of lines) {
+		const match = /^> 💡\s*(.+)$/.exec(line);
+		if (!match) continue;
+		const tip = match[1].trim();
+		if (!tip || tip.length > 120) continue;
+		tips.push({ span, tip });
+	}
+	return tips;
+}
+
+function appendTips(entries: TipCapture[]): void {
+	try {
+		for (const e of entries) {
+			const entry = { ts: new Date().toISOString(), span: e.span, tip: e.tip };
+			appendFileSync(TIPS_PATH, `${JSON.stringify(entry)}\n`, "utf8");
+		}
+	} catch {
+		// Tip capture must never break the session.
+	}
+}
+
+function parseTipEntries(raw: string): TipRecord[] {
+	const entries: TipRecord[] = [];
+	for (const line of raw.split("\n")) {
+		const t = line.trim();
+		if (!t) continue;
+		try {
+			const parsed = JSON.parse(t) as Record<string, unknown>;
+			if (typeof parsed.ts === "string" && typeof parsed.span === "string" && typeof parsed.tip === "string") {
+				entries.push({ ts: parsed.ts, span: parsed.span, tip: parsed.tip });
+			}
+		} catch {
+			// Malformed lines never break the rail.
+		}
+	}
+	return entries;
+}
+
+// Pure lookup: the most frequent tip recorded for a span (case-insensitive
+// span match); ties break toward the most recent record. Returns undefined
+// when no tip was recorded for the span.
+export function topTipFor(span: string, tips: TipRecord[]): string | undefined {
+	const target = span.toLowerCase();
+	const stats = new Map<string, { count: number; last: number }>();
+	for (let i = 0; i < tips.length; i++) {
+		const record = tips[i];
+		if (record.span.toLowerCase() !== target) continue;
+		const existing = stats.get(record.tip);
+		if (existing) {
+			existing.count++;
+			existing.last = i;
+		} else {
+			stats.set(record.tip, { count: 1, last: i });
+		}
+	}
+	let best: { tip: string; count: number; last: number } | undefined;
+	for (const [tip, s] of stats) {
+		if (!best || s.count > best.count || (s.count === best.count && s.last > best.last)) {
+			best = { tip, count: s.count, last: s.last };
+		}
+	}
+	return best?.tip;
+}
+
 function parseVocabReviews(raw: string): VocabReview[] {
 	const reviews: VocabReview[] = [];
 	for (const line of raw.split("\n")) {
@@ -535,7 +624,7 @@ function coachDigest(): string {
 	// Collapsed and hovered ride along so toggling or hovering the title
 	// control repaints through the section memo without bumping the shared
 	// sidebar revision (which would re-render every rail section).
-	return `${[LOG_PATH, VOCAB_PATH, VOCAB_REVIEWS_PATH].map(fileSignature).join("|")}|${railCollapsed ? "1" : "0"}${railHovered ? "1" : "0"}`;
+	return `${[LOG_PATH, VOCAB_PATH, VOCAB_REVIEWS_PATH, TIPS_PATH].map(fileSignature).join("|")}|${railCollapsed ? "1" : "0"}${railHovered ? "1" : "0"}`;
 }
 
 function mountCoachSidebar(tui: TUI, theme: Theme): void {
@@ -718,7 +807,7 @@ function collapsedCoachRow(data: PanelData): string {
 // recommendation each, compact due vocabulary, and a single final hint line.
 // Weekly buckets and the Recent section were removed; the trend stays visible
 // in the card subtitle and /language stats.
-function expandedCoachBody(data: PanelData): string[] {
+function expandedCoachBody(data: PanelData, width: number): string[] {
 	const stats = data.stats;
 	const body: string[] = [];
 	body.push("", "Common errors");
@@ -728,7 +817,10 @@ function expandedCoachBody(data: PanelData): string[] {
 	} else {
 		for (const t of top) {
 			body.push(`  ${toOneLine(t.span, 30)} ×${t.count}`);
-			body.push(`  ${errorRecommendation(t.span, t.count)}`);
+			// A learned tip recorded for this span wins over the generic
+			// heuristic; both stay on one line within the card width.
+			const tip = topTipFor(t.span, data.tips) ?? errorRecommendation(t.span, t.count);
+			body.push(`  ${toOneLine(tip, Math.max(12, width - 6))}`);
 		}
 	}
 	body.push("", "Vocabulary");
@@ -760,7 +852,7 @@ function coachCard(data: PanelData, theme: Theme, width: number, options: CoachC
 	return {
 		title: `Language Coach ${paintHoverable(theme, control, options.hovered, "accent")}`,
 		subtitle: stats?.weeks.length ? `${stats.weeks.at(-1)!.corrections} this week · ${stats.trend}` : undefined,
-		body: options.collapsed ? [collapsedCoachRow(data)] : expandedCoachBody(data),
+		body: options.collapsed ? [collapsedCoachRow(data)] : expandedCoachBody(data, width),
 		tone: CARD_TONE.INFO,
 	};
 }
@@ -776,10 +868,11 @@ interface PanelData {
 	due: VocabStatus[];
 	dueTotal: number;
 	trackedTotal: number;
+	tips: TipRecord[];
 }
 
 function loadPanelData(): PanelData {
-	const data: PanelData = { stats: null, due: [], dueTotal: 0, trackedTotal: 0 };
+	const data: PanelData = { stats: null, due: [], dueTotal: 0, trackedTotal: 0, tips: [] };
 	try {
 		if (existsSync(LOG_PATH)) {
 			const { entries } = parseLogEntries(readFileSync(LOG_PATH, "utf8"));
@@ -800,6 +893,11 @@ function loadPanelData(): PanelData {
 		}
 	} catch {
 		// Vocab load failure renders the panel's empty vocab section.
+	}
+	try {
+		if (existsSync(TIPS_PATH)) data.tips = parseTipEntries(readFileSync(TIPS_PATH, "utf8"));
+	} catch {
+		// Tips load failure falls back to the heuristic recommendations.
 	}
 	return data;
 }
@@ -1066,7 +1164,13 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 		}
 		const text = textFromContent(event.message.content);
 		const coach = coachBlockFrom(text);
-		if (coach) appendLog(config, coach.block, coach.kind);
+		if (coach) {
+			appendLog(config, coach.block, coach.kind);
+			if (coach.kind === "correction") {
+				const tips = tipsFromBlock(coach.block);
+				if (tips.length > 0) appendTips(tips);
+			}
+		}
 		const vocab = vocabFromText(text);
 		if (vocab.length > 0) appendVocab(vocab);
 		try {
