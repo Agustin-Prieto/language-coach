@@ -397,3 +397,22 @@ vocabulary captured" from "all caught up".
 - Unchanged: rail, dashboard fallback panel (`/language panel` + `alt+c`),
   commands, logging/capture/digest, and the remaining handlers'
   never-throw policies.
+
+## Fallback panel removed (2026-09-26)
+- User decision (pre-v0.2.0 cleanup): the persistent rail is the sole
+  dashboard surface; the narrow/non-fullscreen overlay fallback is retired.
+- Removed from `extensions/language-coach.ts`: `CoachPanel`,
+  `openDashboardPanel`, `PANEL_MAX_WIDTH`, the `/language panel` command
+  branch, the `alt+c` registerShortcut, and the now-unused pi-tui imports
+  (`matchesKey`, `OverlayOptions`).
+- `loadPanelData` and `coachCard` stay: both are shared with the rail, and
+  every `CoachCardOptions` field (`collapsed`/`hovered`/`collapseKey`) is
+  rail-driven, so no options plumbing was overlay-only.
+- The `/language` command description and its usage line drop `panel`;
+  stale panel mentions in comments (mount fallback notes, `loadPanelData`
+  render notes, the alt+c clause in the collapse-key comment) updated.
+- Import surface simplified: pi-tui now supplies only the type imports the
+  rail's mouse handling needs (`TUI`, `TuiMouseEvent`, `TuiMouseEventResult`).
+- Unchanged: rail (mount, digest, collapse, coexistence, `agents` key),
+  commands (stats/vocab/digest/mode), logging/capture, never-throw
+  policies, and the rail's rendering (byte-identical output).

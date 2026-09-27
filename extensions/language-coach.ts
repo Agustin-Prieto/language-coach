@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { matchesKey, type OverlayOptions, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
+import type { TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import {
 	CARD_TONE,
 	renderCard,
@@ -557,7 +557,7 @@ function mountCoachRail(ctx: ExtensionContext): void {
 		});
 		ctx.ui.setWidget("language-coach", undefined);
 	} catch {
-		// Rail mount is best-effort; the /language panel fallback works.
+		// Rail mount is best-effort; the session works without it.
 	}
 }
 // gentle-shell stores sidebar state on the terminal, so the coach's marker
@@ -577,7 +577,7 @@ const RAIL_PART_KEY = "agents";
 // shortcut (default ctrl+shift+l; GENTLE_PI_COACH_KEY overrides, "" or "off"
 // disables) plus a click on the title control. ctrl+shift+l is free: pi's
 // built-ins claim ctrl+shift+up/down/f/g, gentle-shell claims ctrl+shift+t
-// (Todos) and ctrl+shift+a (Agents), and the coach already owns alt+c.
+// (Todos) and ctrl+shift+a (Agents).
 const RAIL_COLLAPSE_KEY_DEFAULT = "ctrl+shift+l";
 
 function railCollapseKey(env: NodeJS.ProcessEnv): string | undefined {
@@ -700,7 +700,7 @@ function mountCoachSidebar(tui: TUI, theme: Theme): void {
 		state.parts.set(RAIL_PART_KEY, rail);
 		marker.part = rail;
 	} catch {
-		// Rail registration is best-effort; the /language panel fallback works.
+		// Rail registration is best-effort; the session works without it.
 	}
 }
 
@@ -725,7 +725,7 @@ function unmountCoachSidebar(tui: TUI | undefined): void {
 }
 
 // ---------------------------------------------------------------------------
-// Dashboard card (shared by the rail and the overlay fallback)
+// Dashboard card (rail)
 // ---------------------------------------------------------------------------
 
 // Inline mirror of gentle-shell's lib/shell-hover.ts: one shared role swap on
@@ -828,12 +828,6 @@ function coachCard(data: PanelData, theme: Theme, width: number, options: CoachC
 	};
 }
 
-// ---------------------------------------------------------------------------
-// Dashboard panel (overlay fallback for narrow / non-fullscreen terminals)
-// ---------------------------------------------------------------------------
-
-const PANEL_MAX_WIDTH = 48;
-
 interface PanelData {
 	stats: StatsSummary | null;
 	due: VocabStatus[];
@@ -850,7 +844,7 @@ function loadPanelData(): PanelData {
 			if (entries.length > 0) data.stats = aggregateStats(entries);
 		}
 	} catch {
-		// Stats load failure renders the panel's "no data yet" state.
+		// Stats load failure renders the rail's "no data yet" state.
 	}
 	try {
 		if (existsSync(VOCAB_PATH)) {
@@ -863,7 +857,7 @@ function loadPanelData(): PanelData {
 			data.due = dueStatuses.slice(0, 5);
 		}
 	} catch {
-		// Vocab load failure renders the panel's empty vocab section.
+		// Vocab load failure renders the rail's empty vocab section.
 	}
 	try {
 		if (existsSync(TIPS_PATH)) data.tips = parseTipEntries(readFileSync(TIPS_PATH, "utf8"));
@@ -871,57 +865,6 @@ function loadPanelData(): PanelData {
 		// Tips load failure falls back to the heuristic recommendations.
 	}
 	return data;
-}
-
-class CoachPanel {
-	private readonly data: PanelData;
-	private readonly onClose: () => void;
-
-	constructor(private readonly theme: Theme, data: PanelData, onClose: () => void) {
-		this.data = data;
-		this.onClose = onClose;
-	}
-
-	handleInput(data: string): void {
-		if (matchesKey(data, "escape")) this.onClose();
-	}
-
-	render(width: number): string[] {
-		// Lines are composed from live state on every render; no cached children
-		// to invalidate. Same card look as the persistent rail, always expanded
-		// (the overlay has no collapse control).
-		try {
-			return renderCard(
-				coachCard(this.data, this.theme, width, { collapsed: false, hovered: false, collapseKey: undefined }),
-				this.theme,
-				width,
-				{ expanded: true, hint: "esc to close" },
-			);
-		} catch {
-			// An overlay must never throw out of render.
-			return [];
-		}
-	}
-
-	invalidate(): void {}
-}
-
-async function openDashboardPanel(ctx: ExtensionContext): Promise<void> {
-	// Resolved inside the factory once the TUI (and its terminal width) is known;
-	// overlayOptions is read after the factory runs.
-	let options: OverlayOptions = { anchor: "center", width: PANEL_MAX_WIDTH, margin: 1, maxHeight: "80%" };
-	await ctx.ui.custom((_tui, theme, _keybindings, done) => {
-		const cols = _tui.terminal.columns;
-		// Right-anchor on wide terminals, fall back to centered on narrow ones;
-		// width stays within min(48, cols - 4).
-		options = {
-			anchor: cols >= 80 ? "right-center" : "center",
-			width: Math.max(24, Math.min(PANEL_MAX_WIDTH, cols - 4)),
-			margin: 1,
-			maxHeight: "80%",
-		};
-		return new CoachPanel(theme, loadPanelData(), () => done(undefined));
-	}, { overlay: true, overlayOptions: () => options });
 }
 
 export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env) {
@@ -982,22 +925,8 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 		unmountCoachSidebar(railTui);
 	});
 
-	// Dashboard panel shortcut. alt+c is free: the built-in keymap
-	// (docs/keybindings.md) claims alt+b/f/d/y/v/q, alt+arrows,
-	// alt+enter/backspace/delete, and ctrl+<letter> combos, but no alt+c.
-	pi.registerShortcut("alt+c", {
-		description: "Language Coach: open the dashboard panel",
-		handler: async (ctx) => {
-			if (!ctx.hasUI) {
-				console.log("The dashboard panel requires the TUI");
-				return;
-			}
-			await openDashboardPanel(ctx);
-		},
-	});
-
 	pi.registerCommand("language", {
-		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, open the dashboard panel, or set mode (on | productivity | off)",
+		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, or set mode (on | productivity | off)",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim().toLowerCase();
 
@@ -1134,17 +1063,8 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 				return;
 			}
 
-			if (trimmed === "panel") {
-				if (!ctx.hasUI) {
-					console.log("The dashboard panel requires the TUI");
-					return;
-				}
-				await openDashboardPanel(ctx);
-				return;
-			}
-
 			if (!MODES.includes(trimmed as CoachMode)) {
-				ctx.ui.notify("Usage: /language [on | productivity | off | panel] (no args shows status or runs setup)", "warning");
+				ctx.ui.notify("Usage: /language [on | productivity | off] (no args shows status or runs setup)", "warning");
 				return;
 			}
 
