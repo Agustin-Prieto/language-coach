@@ -416,3 +416,23 @@ vocabulary captured" from "all caught up".
 - Unchanged: rail (mount, digest, collapse, coexistence, `agents` key),
   commands (stats/vocab/digest/mode), logging/capture, never-throw
   policies, and the rail's rendering (byte-identical output).
+
+## Coach scope guard (2026-09-26)
+
+User-reported bug: the coach sometimes reacted to the model's own thinking or
+to partial/steered responses instead of the user's message.
+
+Fix at both levels:
+
+- `message_end` guard in `extensions/language-coach.ts`: coach blocks are
+  logged/captured (appendLog, appendVocab, appendTips) only when the
+  assistant message's `stopReason === "stop"` (pi-ai `StopReason` union:
+  `"pending" | "stop" | "length" | "toolUse" | "error" | "aborted" |
+  "deferred"`). Steered/aborted fragments and errored responses are no
+  longer logged or captured. Non-assistant messages and the mode-off
+  unmount path keep their existing behavior; the never-throw policy is
+  unchanged.
+- Overlay rule in `buildOverlay`: coach ONLY the user's latest
+  natural-language message; never quote or coach your own thinking, tool
+  output, or partial/steered responses; when there is no new user message,
+  write no coach block.

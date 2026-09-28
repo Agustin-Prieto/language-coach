@@ -59,6 +59,7 @@ function buildOverlay(config: CoachConfig): string {
 		`- If the user's ${target} message is already natural: keep the 🎓 echo line, and on the ✏️ line say it is correct and optionally give at most one more natural alternative, bolding the changed words. If no alternative adds value, say so briefly. Do not invent corrections.`,
 		`- If the user writes in any other language: reply in that language; no coaching.`,
 		`- Never translate or rewrite code, commands, identifiers, logs, file paths, commit messages, or delegated artifacts.`,
+		`- Coach ONLY the user's latest natural-language message; never quote or coach your own thinking, tool output, or partial/steered responses; when there is no new user message, write no coach block.`,
 		`- Coaching is one coach block max; never let it delay or reshape the technical task. The echo line quotes the user's own words; never quote code or file paths in it.`,
 		`- On noticing a recurring mistake, save one short line with mem_save (type "preference", topic_key "language-mistakes-${targetLower}").`,
 		`- When the user asks for a review or progress report: read the recent entries in ${LOG_PATH} and search memories with that topic_key, then summarize compactly: recurring mistakes, weekly correction volume, what improved, and 2-3 focus points for the coming period.`,
@@ -901,6 +902,9 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 			unmountCoachSidebar(railTui);
 			return;
 		}
+		// Aborted/steered partials and errored responses are never logged or
+		// captured; only a fully completed assistant reply coaches.
+		if (event.message.stopReason !== "stop") return;
 		const text = textFromContent(event.message.content);
 		const coach = coachBlockFrom(text);
 		if (coach) {
