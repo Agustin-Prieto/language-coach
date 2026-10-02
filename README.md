@@ -10,7 +10,7 @@ A generic, lightweight language-learning coach for [Pi](https://github.com/badlo
 - **Skill** (`skills/language-interview/`): on-demand mock technical interviews in the target language (progressive disclosure).
 - **Skill** (`skills/language-drill/`): on-demand targeted drills built from the user's own recurring corrected mistakes (coach log + mistake history), including due vocabulary from captured phrases.
 
-The coach never applies to code, commands, commit messages, delegated subagent artifacts, or SDD files.
+The coach never applies to code, commands, commit messages, delegated subagent artifacts, or SDD files. It is active only in the main interactive session (mode `tui`): never in pi subagents (`pi --mode rpc` children) or headless runs (`pi -p`).
 
 ## Install
 

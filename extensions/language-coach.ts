@@ -28,6 +28,14 @@ const TIPS_PATH = join(homedir(), ".pi", "agent", "language-coach-tips.jsonl");
 const MODES: readonly CoachMode[] = ["on", "productivity", "off"];
 let warnedAboutConfig = false;
 
+// Subagent children run as `pi --mode rpc` and inherit globally installed
+// extensions, so every coach hook fires in them too. The coach is a
+// main-session concern: overlay injection, data capture, and TUI surfaces
+// are all gated on the main interactive session (mode "tui").
+function isMainSession(ctx: ExtensionContext): boolean {
+	return ctx.mode === "tui";
+}
+
 function loadConfig(): CoachConfig | null {
 	try {
 		if (!existsSync(CONFIG_PATH)) return null;
@@ -884,19 +892,22 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 	pi.on("session_start", async (_event, ctx) => {
 		const config = loadConfig();
 		applyStatus(ctx, config && config.mode !== "off" ? config : null);
-		if (config && config.mode !== "off") mountCoachRail(ctx);
+		if (config && config.mode !== "off" && isMainSession(ctx)) mountCoachRail(ctx);
 		else unmountCoachSidebar(railTui);
 	});
 
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (!isMainSession(ctx)) return undefined;
 		const config = loadConfig();
 		if (!config || config.mode === "off") return;
 		const base = event.systemPrompt ?? "";
 		return { systemPrompt: `${base}\n\n${buildOverlay(config)}` };
 	});
 
-	pi.on("message_end", async (event, _ctx) => {
+	pi.on("message_end", async (event, ctx) => {
 		if (event.message.role !== "assistant") return;
+		// Subagent replies never enter the user's data files.
+		if (!isMainSession(ctx)) return;
 		const config = loadConfig();
 		if (!config || config.mode === "off") {
 			unmountCoachSidebar(railTui);

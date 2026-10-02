@@ -436,3 +436,28 @@ Fix at both levels:
   natural-language message; never quote or coach your own thinking, tool
   output, or partial/steered responses; when there is no new user message,
   write no coach block.
+
+## Main-session-only guard (2026-09-26)
+
+User-reported bug: the coach activated in pi subagents, which run as
+separate `pi --mode rpc` child processes and inherit global extensions, so
+`before_agent_start` and `message_end` fired in them too — injecting the
+coach overlay into subagent prompts and writing subagent replies into the
+user's data files.
+
+Fix in `extensions/language-coach.ts`: a module-level `isMainSession(ctx)`
+helper (`ctx.mode === "tui"`) gates all three sites:
+
+- `before_agent_start` — the overlay is injected only in the main
+  interactive session (mode "tui"); subagent (rpc), print, and json runs
+  get no overlay.
+- `message_end` — all data capture (appendLog, appendVocab, appendTips) is
+  skipped outside the main session; subagent replies never enter the
+  log/vocab/tips files. The `stopReason === "stop"` guard stays.
+- `session_start` — the rail mount is additionally gated on
+  `isMainSession(ctx)` (alongside the existing `ctx.hasUI` guard inside
+  `mountCoachRail`); subagents mount no TUI surfaces.
+
+Intended side effect: headless `pi -p` runs no longer log coach blocks or
+show the coach at all — the coach is a main-interactive-session feature.
+Commands (stats/vocab/digest/mode) remain user-invoked and unchanged.
