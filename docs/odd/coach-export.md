@@ -25,4 +25,13 @@ synced/remote data without touching the raw stores.
 - [x] T4 — Commit (parent).
 
 ## Evidence
-- (pending — parent fills after verification)
+- tsc strict: `npx --yes -p typescript@5 tsc -p /tmp/language-coach.tsconfig.json` → exit 0.
+- Live end-to-end (parent, headless): `pi -p "/language export"` → "Export
+  saved to ~/.pi/agent/language-coach-export.json"; snapshot validated:
+  schema language-coach-export/v1, 149 log / 6 vocab / 3 reviews / 8 tips,
+  weeks carry startISO (e.g. Sep 21–27 → 2026-09-21, 85 corrections),
+  trend stable. Consumer: language-coach-web repo.
+- Review `review-411405c44a381140` **approved** with two informational
+  advisories (:1130 WARNING, :1144 SUGGESTION) recorded as later polish;
+  acknowledged, authority burned.
+- Commits: `3ad9fa5` (feature) + (this record).
