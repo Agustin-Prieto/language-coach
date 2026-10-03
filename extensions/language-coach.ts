@@ -25,6 +25,8 @@ const DIGEST_PATH = join(homedir(), ".pi", "agent", "language-coach-digest.md");
 const VOCAB_PATH = join(homedir(), ".pi", "agent", "language-coach-vocab.jsonl");
 const VOCAB_REVIEWS_PATH = join(homedir(), ".pi", "agent", "language-coach-vocab-reviews.jsonl");
 const TIPS_PATH = join(homedir(), ".pi", "agent", "language-coach-tips.jsonl");
+const EXPORT_PATH = join(homedir(), ".pi", "agent", "language-coach-export.json");
+const EXPORT_SCHEMA = "language-coach-export/v1";
 const MODES: readonly CoachMode[] = ["on", "productivity", "off"];
 let warnedAboutConfig = false;
 
@@ -136,6 +138,9 @@ interface LogEntry {
 interface WeekBucket {
 	label: string;
 	corrections: number;
+	// Monday ISO date (local YYYY-MM-DD) of the bucket start, so consumers
+	// (the web app export) can chart without reimplementing week math.
+	startISO: string;
 }
 
 interface StatsSummary {
@@ -157,6 +162,14 @@ function startOfWeek(date: Date): Date {
 
 function formatDate(d: Date): string {
 	return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+
+// Local-date ISO form (YYYY-MM-DD), not Date.toISOString(): that one is UTC
+// and could shift a local Monday to Sunday in offsets behind UTC.
+function toISODate(d: Date): string {
+	const mm = String(d.getMonth() + 1).padStart(2, "0");
+	const dd = String(d.getDate()).padStart(2, "0");
+	return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
 function formatDayTime(d: Date): string {
@@ -238,7 +251,7 @@ export function aggregateStats(entries: LogEntry[]): StatsSummary {
 	const weeks: WeekBucket[] = weekStarts.slice(0, 4).map((ws) => {
 		const we = new Date(ws);
 		we.setDate(we.getDate() + 6);
-		return { label: `${formatDate(ws)}–${formatDate(we)}`, corrections: 0 };
+		return { label: `${formatDate(ws)}–${formatDate(we)}`, corrections: 0, startISO: toISODate(ws) };
 	});
 
 	const spanCounts = new Map<string, number>();
@@ -941,7 +954,7 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 	});
 
 	pi.registerCommand("language", {
-		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, or set mode (on | productivity | off)",
+		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, export a JSON snapshot, or set mode (on | productivity | off)",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim().toLowerCase();
 
@@ -1074,6 +1087,56 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 					else console.log(done);
 				} catch (error) {
 					ctx.ui.notify(`Language Coach: failed to write digest (${String(error)})`, "warning");
+				}
+				return;
+			}
+
+			if (trimmed === "export") {
+				const config = loadConfig();
+				if (!config) {
+					ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
+					return;
+				}
+				try {
+					const raw = existsSync(LOG_PATH) ? readFileSync(LOG_PATH, "utf8") : "";
+					if (!raw.trim()) {
+						ctx.ui.notify("No coaching data yet", "warning");
+						return;
+					}
+					const { entries } = parseLogEntries(raw);
+					const stats = aggregateStats(entries);
+					const vocab = existsSync(VOCAB_PATH) ? parseVocabEntries(readFileSync(VOCAB_PATH, "utf8")) : [];
+					const reviews = existsSync(VOCAB_REVIEWS_PATH) ? parseVocabReviews(readFileSync(VOCAB_REVIEWS_PATH, "utf8")) : [];
+					const tips = existsSync(TIPS_PATH) ? parseTipEntries(readFileSync(TIPS_PATH, "utf8")) : [];
+					// Single consolidated snapshot for the separate web app; every
+					// source store stays read-only and only EXPORT_PATH is written.
+					const snapshot = {
+						schema: EXPORT_SCHEMA,
+						generatedAt: new Date().toISOString(),
+						nativeLanguage: config.nativeLanguage,
+						targetLanguage: config.targetLanguage,
+						stats: {
+							total: stats.total,
+							kinds: stats.kinds,
+							weeks: stats.weeks.map((w) => ({ label: w.label, corrections: w.corrections, startISO: w.startISO })),
+							trend: stats.trend,
+						},
+						log: entries,
+						vocab,
+						reviews,
+						tips,
+					};
+					try {
+						writeFileSync(EXPORT_PATH, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+					} catch (error) {
+						ctx.ui.notify(`Language Coach: could not write export (${String(error)})`, "warning");
+						return;
+					}
+					const done = `Export saved to ${EXPORT_PATH}`;
+					if (ctx.hasUI) ctx.ui.notify(done, "info");
+					else console.log(done);
+				} catch (error) {
+					ctx.ui.notify(`Language Coach: failed to write export (${String(error)})`, "warning");
 				}
 				return;
 			}

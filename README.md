@@ -34,6 +34,7 @@ Data files live in `~/.pi/agent` (environment, not source) and are unaffected by
 | `language-coach-vocab.jsonl` | Captured phrases from 🌐 translations: `{ ts, phrase, translation, source }` |
 | `language-coach-vocab-reviews.jsonl` | Review records appended by drills: `{ ts, phrase, correct }` |
 | `language-coach-tips.jsonl` | Learned tips captured from 💡 lines in corrections: `{ ts, span, tip }` |
+| `language-coach-export.json` | JSON snapshot written by `/language export` (schema `language-coach-export/v1`); the input for the separate web app |
 
 ## Commands
 
@@ -41,6 +42,7 @@ Data files live in `~/.pi/agent` (environment, not source) and are unaffected by
 - `/language on|productivity|off` — set mode (persisted). `off` injects nothing (zero cost).
 - `/language stats` — progress dashboard from the coach log: block counts by kind, corrections per week for the last 4 ISO weeks with a trend label (improving / stable / rising), top recurring corrections (the `**bold**` spans), and the last 5 blocks. Read-only; headless sessions print the summary to the console.
 - `/language digest` — append a dated digest section (totals, weekly trend, top corrections, "since last digest" count) to `~/.pi/agent/language-coach-digest.md`
+- `/language export` — write a consolidated JSON snapshot of all coach data (schema `language-coach-export/v1`: config languages, weekly stats with per-week `startISO`, and the full log, vocabulary, reviews, and tips) to `~/.pi/agent/language-coach-export.json`, for the separate web app to render from synced data. Overwrites on each run; read-only over the source stores.
 - `/language vocab` — summary of tracked vocabulary phrases (from 🌐 translations) and which are due for review now; shows the 5 most recent captures. Read-only; headless sessions print the summary to the console.
 - `/skill:language-interview [topic]` — start a mock interview.
 - `/skill:language-drill [count]` — targeted practice of your most frequent corrected mistakes (default 5 exercises).
