@@ -18,7 +18,7 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
 - [x] M2 — Mistake intelligence: taxonomy catalog v1 (6 seeded patterns), pending-pattern store, zod classifier boundary (typed rejections, strict schemas), typed event factories, severity-weighted mastery {low 0.5, medium 1.0, high 1.5}; 109/109 tests; zod added as first runtime dep
 - [x] M3a — Adaptive coach (engine): pure `decideCorrection` policy (regressed > mastery band > status), `dueForReview`, bounded `selectContext` with caps + deterministic token estimate, templated reasons; 148/148 tests
 - [x] M3b — Adapter wiring: Pi extension consumes engine (engine barrel + dist packaging, 🏷️ classification riding the coach block with closed-list ids, policy directives in overlay, event recording with pending-store routing + analysis_rejected fallbacks, `/language rebuild` with confirm, full try/catch degradation to legacy behavior)
-- [ ] M4 — Personalized drills
+- [x] M4 — Personalized drills: deterministic cloze drills from catalog data (all 6 patterns), code-graded answers, self-graded vocab flashcards, `selectDrillItems` with DRILL_CAPS, drill results as events via `makeDrillCompleted`, `/language drill` interactive loop; 180/180 tests. Follow-up: vocabulary drill results don't schedule `nextReviewAt` yet (reducer gap)
 - [ ] M5 — Interview + web integration
 
 ## Evidence
@@ -48,3 +48,4 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
   - R3-001 (WARNING) extensions/language-coach.ts:414-418
   - R3-002 extensions/language-coach.ts:280-281
   - R3-003 extensions/language-coach.ts:414-418
+- M4 implemented by gentle-ai-worker; verified by gentle-ai-verify: 6/6 PASS (build, tsc, 180/180 vitest, determinism, no-LLM drill path, event discipline via makeDrillCompleted, fold integration, additive catalog shape)
