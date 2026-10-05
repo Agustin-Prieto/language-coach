@@ -75,15 +75,44 @@ export async function writeSnapshot(dir: string, model: LearnerModel): Promise<v
   await writeFile(path.join(dir, SNAPSHOT_FILE), `${JSON.stringify(model, null, 2)}\n`, "utf8");
 }
 
+/** The snapshot (model) version this engine writes and reads. Matches `LearnerModel["version"]`. */
+export const SNAPSHOT_VERSION = 2;
+
+/**
+ * Thrown when `learner.json` exists but its `version` is not supported.
+ * Mismatched snapshots are never silently loaded: rebuild from `events.jsonl`
+ * instead.
+ */
+export class SnapshotVersionError extends Error {
+  readonly foundVersion: unknown;
+
+  constructor(foundVersion: unknown) {
+    const found = JSON.stringify(foundVersion) ?? String(foundVersion);
+    super(
+      `unsupported learner snapshot version: found ${found}, supported ${SNAPSHOT_VERSION} — refusing to load; rebuild from ${EVENTS_FILE} instead`,
+    );
+    this.name = "SnapshotVersionError";
+    this.foundVersion = foundVersion;
+  }
+}
+
 /** Read `learner.json`; returns null when no snapshot exists. */
 export async function readSnapshot(dir: string): Promise<LearnerModel | null> {
+  let raw: string;
   try {
-    const raw = await readFile(path.join(dir, SNAPSHOT_FILE), "utf8");
-    return JSON.parse(raw) as LearnerModel;
+    raw = await readFile(path.join(dir, SNAPSHOT_FILE), "utf8");
   } catch (err) {
     if (isNotFoundError(err)) return null;
     throw err;
   }
+  const parsed: unknown = JSON.parse(raw);
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new SnapshotVersionError(parsed);
+  }
+  if ((parsed as Record<string, unknown>).version !== SNAPSHOT_VERSION) {
+    throw new SnapshotVersionError((parsed as Record<string, unknown>).version);
+  }
+  return parsed as LearnerModel;
 }
 
 /** Structural minimum for a line to count as an event, not as malformed. */

@@ -14,11 +14,11 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
 
 ## Later milestones (from architecture doc)
 
-- M1 — Learner Model complete: importer for existing `~/.pi/agent/language-coach-*.jsonl`, `coach rebuild`
-- M2 — Mistake intelligence: taxonomy catalog, classifier port + zod schema, mastery + status transitions
-- M3 — Adaptive coach: policy functions, context budget, prompt directives
-- M4 — Personalized drills
-- M5 — Interview + web integration
+- [x] M1 — Learner Model complete: legacy JSONL importer (log/vocab/vocab-reviews parsed; tips reported unmapped), `EventBase.metadata?` additive field, `SnapshotVersionError` guard, `rebuildEvents`/`rebuildSnapshot` reusing fold/store; 48/48 tests
+- [ ] M2 — Mistake intelligence: taxonomy catalog, classifier port + zod schema, mastery + status transitions
+- [ ] M3 — Adaptive coach: policy functions, context budget, prompt directives
+- [ ] M4 — Personalized drills
+- [ ] M5 — Interview + web integration
 
 ## Evidence
 
@@ -29,3 +29,8 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
   - R3-002 packages/engine/src/engine/fold.ts:271
   - R3-003 packages/engine/src/engine/fold.ts:293
   - R3-004 packages/engine/src/learner/store.ts:53
+- M1 implemented by gentle-ai-worker (RED→GREEN observed); verified by gentle-ai-verify: 5/5 PASS (tsc, 48/48 vitest, boundary greps clean, mapping honesty, version guard, no duplicated logic)
+- M1 commit `53b1d0b` reviewed natively (lineage `review-6b8daf5e20ece4fd`, medium tier, lens review-reliability): **approved**, authority acknowledged/burned. Non-blocking findings for later work:
+  - R3-001 (WARNING) packages/engine/src/legacy/import.ts:108
+  - R3-002 packages/engine/src/events/sort.ts:9
+  - R3-003 packages/engine/src/learner/store.ts:83
