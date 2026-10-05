@@ -17,6 +17,13 @@ export interface EventBase {
   schemaVersion: typeof EventSchemaVersion;
   /** ISO 8601 timestamp of when the event happened. */
   timestamp: string;
+  /**
+   * Optional provenance metadata (e.g. legacy-import context such as the
+   * original line text or translation). Reducers ignore it; it exists so
+   * importers never fabricate payload fields that the closed event schemas
+   * do not define. Additive and optional: does not bump EventSchemaVersion.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 /** A user message passed the deterministic gate and was analyzed. */
