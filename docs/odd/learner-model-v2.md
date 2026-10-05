@@ -120,8 +120,12 @@ to validate reducers against real history.
   directives.
 - **M4 — Personalized drills**: selection from due/weakest items, templated
   reasons, drill results as events.
-- **M5 — Interview + web integration**: interview consumes/updates the model;
-  language-coach-web reads learner.json via the engine.
+- **M5 — Interview + web integration** (done): interview consumes the model —
+  pure `selectInterviewFocus` (`INTERVIEW_CAPS`, templated reasons) plus the
+  `/language interview-brief` adapter subcommand; the interview keeps updating
+  the model via the existing 🏷️ protocol. Web integration ships through the
+  `/language export` payload: additive optional `learner` field (engine
+  snapshot + `engineStats`), schema stays `language-coach-export/v1`.
 
 ## Principle
 

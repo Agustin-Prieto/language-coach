@@ -87,6 +87,8 @@ export type { PatternDrill } from "./taxonomy/catalog.js";
 // Selection (deterministic context budget) -------------------------------------------
 export { DEFAULT_CONTEXT_CAPS, selectContext, serializeContext } from "./selection/context.js";
 export type { ContextCaps, ContextMistakeEntry, PromptContext } from "./selection/context.js";
+export { INTERVIEW_CAPS, selectInterviewFocus } from "./selection/interview.js";
+export type { InterviewCaps, InterviewFocus, InterviewFocusArea } from "./selection/interview.js";
 
 // Drills (deterministic selection, checking, result application) -----------------------
 export { DRILL_CAPS, selectDrillItems } from "./drill/select.js";
