@@ -20,7 +20,7 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
 - [x] M3b — Adapter wiring: Pi extension consumes engine (engine barrel + dist packaging, 🏷️ classification riding the coach block with closed-list ids, policy directives in overlay, event recording with pending-store routing + analysis_rejected fallbacks, `/language rebuild` with confirm, full try/catch degradation to legacy behavior)
 - [x] M4 — Personalized drills: deterministic cloze drills from catalog data (all 6 patterns), code-graded answers, self-graded vocab flashcards, `selectDrillItems` with DRILL_CAPS, drill results as events via `makeDrillCompleted`, `/language drill` interactive loop; 180/180 tests. Follow-up: vocabulary drill results don't schedule `nextReviewAt` yet (reducer gap)
 - M4.1 — Completion pass: vocabulary drill SRS scheduling (shared `schedule` helper, failure resets), one-time idempotent legacy import bootstrap (marker + zero-event guard), legacy provenance line in `/language rebuild` report; 185/185 tests
-- [ ] M5 — Interview + web integration
+- [x] M5 — Interview + web integration: engine `selectInterviewFocus` (weak/strong/vocabulary selection, `INTERVIEW_CAPS` = { maxWeakPatterns: 4, maxStrongAreas: 3, maxReasonChars: 240 }, templated reasons) + barrel export, 16 new tests (201/201); `/language interview-brief` adapter subcommand (same guards/degradation as drill); "Learner Model integration" section in skills/language-interview/SKILL.md; export payload gains additive optional `learner` field (model + engineStats { eventCount, legacyEventCount, drillAttempts }) — schema stays v1
 
 ## Evidence
 

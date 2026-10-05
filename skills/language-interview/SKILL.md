@@ -17,3 +17,9 @@ Run a mock technical interview entirely in the target language:
 - The interview ends when the user says stop, asks to end, or after ~10 questions. Then summarize: recurring mistakes, 3-5 useful expressions from the session, and 2 concrete improvements. Save recurring mistakes with mem_save (type "preference", topic_key "language-mistakes-<target language lowercased>").
 - While the interview is active, this protocol takes precedence over the always-on Language Coach overlay correction prefix; give feedback in the per-answer block instead.
 - The interview never changes or delays the user's actual technical work outside this exercise.
+
+## Learner Model integration
+
+- If the coach is configured, run `/language interview-brief` first and use its focus areas to pick question topics: probe the listed weak patterns, steer questions toward the strong areas, and weave the listed vocabulary into your questions. No brief or empty focus → run topic-first as usual.
+- Per-answer feedback stays exactly as defined above.
+- The always-on coach's 🏷️ tagging updates the Learner Model during the interview — do not duplicate that bookkeeping (no per-answer logs or memory writes; only the end-of-session summary applies).

@@ -546,6 +546,49 @@ async function recordCoachEvents(config: CoachConfig, block: string): Promise<vo
 }
 
 /**
+ * Load the learner model for an engine surface: the cached snapshot when
+ * readable, else a rebuild from the event log. Shared by the drill and
+ * interview-brief surfaces so they degrade identically: any failure notifies
+ * once and returns null (the surface never throws).
+ */
+async function loadLearnerModel(
+	ctx: ExtensionContext,
+	config: CoachConfig,
+	engine: EngineApi,
+): Promise<EngineModule.LearnerModel | null> {
+	const seed = { languagePair: { native: config.nativeLanguage, target: config.targetLanguage } };
+	try {
+		const snapshot = await engine.readSnapshot(ENGINE_DATA_DIR);
+		if (snapshot) return snapshot;
+		const store = engine.createEventStore(ENGINE_DATA_DIR);
+		const { events } = await store.readEvents();
+		return engine.rebuildEvents(events, seed, new Date());
+	} catch (error) {
+		ctx.ui.notify(`Language Coach: could not load the learner model (${String(error)})`, "warning");
+		return null;
+	}
+}
+
+/**
+ * Quiet learner-model load for background surfaces (export): snapshot first,
+ * else rebuild from the event log. Returns null on any failure without
+ * notifying — engine absence or a broken store is a normal export state, and
+ * the export simply omits the `learner` field.
+ */
+async function loadLearnerModelQuietly(config: CoachConfig, engine: EngineApi): Promise<EngineModule.LearnerModel | null> {
+	try {
+		const seed = { languagePair: { native: config.nativeLanguage, target: config.targetLanguage } };
+		const snapshot = await engine.readSnapshot(ENGINE_DATA_DIR);
+		if (snapshot) return snapshot;
+		const store = engine.createEventStore(ENGINE_DATA_DIR);
+		const { events } = await store.readEvents();
+		return engine.rebuildEvents(events, seed, new Date());
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Deterministic legacy-import detection for the rebuild report. The M1
  * importer writes three shapes: log entries carry `metadata.legacyKind`,
  * vocabulary captures carry `metadata.translation`, and vocabulary reviews
@@ -558,6 +601,60 @@ function isLegacyImportedEvent(event: EngineModule.LanguageEvent): boolean {
 	if (event.type === "vocabulary_detected") return event.metadata !== undefined && "translation" in event.metadata;
 	if (event.type === "drill_completed") return event.drillId === "vocab-review";
 	return false;
+}
+
+/**
+ * Shape of the additive optional `learner` export field (M5 web
+ * integration): the engine snapshot (the learner.json contents, or a quiet
+ * rebuild from the event log) plus engineStats read from the event store.
+ */
+export interface LearnerExportPayload {
+	model: EngineModule.LearnerModel;
+	engineStats: {
+		/** Total events in the engine store. */
+		eventCount: number;
+		/** Events written by the one-time legacy import (isLegacyImportedEvent). */
+		legacyEventCount: number;
+		/** drill_completed events (cloze, recall, and legacy vocab-review drills). */
+		drillAttempts: number;
+	};
+}
+
+/**
+ * Build the export's `learner` field from a model and the engine events.
+ * Pure data shaping: every count comes verbatim from the store — no
+ * inference, no invented numbers. Exported so the payload shape is testable
+ * without running the whole export command.
+ */
+export function buildLearnerExportPayload(
+	model: EngineModule.LearnerModel,
+	events: EngineModule.LanguageEvent[],
+): LearnerExportPayload {
+	return {
+		model,
+		engineStats: {
+			eventCount: events.length,
+			legacyEventCount: events.filter(isLegacyImportedEvent).length,
+			drillAttempts: events.filter((event) => event.type === "drill_completed").length,
+		},
+	};
+}
+
+/**
+ * Collect the export's `learner` field data, or null when the engine, the
+ * model, or the event store is unavailable — the export then stays exactly
+ * as it was before the Learner Model existed.
+ */
+async function collectLearnerExportField(config: CoachConfig, engine: EngineApi): Promise<LearnerExportPayload | null> {
+	try {
+		const model = await loadLearnerModelQuietly(config, engine);
+		if (!model) return null;
+		const { events } = await engine.createEventStore(ENGINE_DATA_DIR).readEvents();
+		return buildLearnerExportPayload(model, events);
+	} catch (error) {
+		debugLog(`export: learner field omitted (${String(error)})`);
+		return null;
+	}
 }
 
 /**
@@ -577,20 +674,8 @@ async function runDrillSession(
 ): Promise<void> {
 	const seed = { languagePair: { native: config.nativeLanguage, target: config.targetLanguage } };
 	// Load the learner model: cached snapshot, else rebuild from the event log.
-	let model: EngineModule.LearnerModel;
-	try {
-		const snapshot = await engine.readSnapshot(ENGINE_DATA_DIR);
-		if (snapshot) {
-			model = snapshot;
-		} else {
-			const store = engine.createEventStore(ENGINE_DATA_DIR);
-			const { events } = await store.readEvents();
-			model = engine.rebuildEvents(events, seed, new Date());
-		}
-	} catch (error) {
-		ctx.ui.notify(`Language Coach: could not load the learner model (${String(error)})`, "warning");
-		return;
-	}
+	const model = await loadLearnerModel(ctx, config, engine);
+	if (!model) return;
 
 	let items: EngineModule.DrillItem[];
 	try {
@@ -695,6 +780,55 @@ async function runDrillSession(
 	if (masteryChanges.length > 0) lines.push(`Mastery: ${masteryChanges.join(", ")}`);
 	if (saveFailureNotified) lines.push("⚠ Some drill results could not be saved");
 	ctx.ui.notify(lines.join("\n"), "info");
+}
+
+/**
+ * Render the `/language interview-brief` compact brief (M5). Deterministic:
+ * the engine selects the focus (selectInterviewFocus) and this only renders
+ * it — weak patterns to probe, strong areas to leverage, vocabulary to
+ * activate. An empty focus means the interview runs topic-first as before.
+ * Same guard/degradation as the drill surface: any failure notifies once.
+ */
+async function runInterviewBrief(
+	ctx: ExtensionContext,
+	config: CoachConfig,
+	engine: EngineApi,
+): Promise<void> {
+	const model = await loadLearnerModel(ctx, config, engine);
+	if (!model) return;
+
+	let focus: EngineModule.InterviewFocus;
+	try {
+		focus = engine.selectInterviewFocus(model, engine.INTERVIEW_CAPS, new Date());
+	} catch (error) {
+		ctx.ui.notify(`Language Coach: interview focus selection failed (${String(error)})`, "warning");
+		return;
+	}
+
+	const lines: string[] = [];
+	if (focus.weakAreas.length === 0 && focus.strongAreas.length === 0 && focus.vocabulary.length === 0) {
+		lines.push("Interview brief: no learner-model focus yet — run the interview topic-first.");
+	} else {
+		lines.push("Interview brief — focus from your Learner Model:");
+		if (focus.weakAreas.length > 0) {
+			lines.push("Weak patterns to probe:");
+			for (const area of focus.weakAreas) lines.push(`  - ${area.patternId}: ${area.reason}`);
+		}
+		if (focus.strongAreas.length > 0) {
+			lines.push("Strong areas to leverage:");
+			for (const area of focus.strongAreas) lines.push(`  - ${area.patternId}: ${area.reason}`);
+		}
+		if (focus.vocabulary.length > 0) {
+			lines.push("Vocabulary to activate (try to use naturally):");
+			for (const lemma of focus.vocabulary) lines.push(`  - ${lemma}`);
+		}
+		lines.push(
+			"Per-answer feedback and the coach's 🏷️ tags keep updating your Learner Model during the interview — no separate bookkeeping needed.",
+		);
+	}
+	const brief = lines.join("\n");
+	if (ctx.hasUI) ctx.ui.notify(brief, "info");
+	else console.log(brief);
 }
 
 function textFromContent(content: unknown): string {
@@ -1548,7 +1682,7 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 	});
 
 	pi.registerCommand("language", {
-		description: "Language Coach: show status, run setup, view stats, review vocabulary, run a drill session, write a digest, export a JSON snapshot, rebuild the learner model, or set mode (on | productivity | off)",
+		description: "Language Coach: show status, run setup, view stats, review vocabulary, run a drill session, show an interview brief, write a digest, export a JSON snapshot, rebuild the learner model, or set mode (on | productivity | off)",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim().toLowerCase();
 
@@ -1704,6 +1838,15 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 					const tips = existsSync(TIPS_PATH) ? parseTipEntries(readFileSync(TIPS_PATH, "utf8")) : [];
 					// Single consolidated snapshot for the separate web app; every
 					// source store stays read-only and only EXPORT_PATH is written.
+					// Learner Model v2 (M5 web integration): additive optional `learner`
+					// field (engine snapshot + engineStats). Engine unavailable or any
+					// failure → the field is simply omitted. SCHEMA VERSION STAYS v1:
+					// the field is additive and optional, so v1 consumers that ignore
+					// unknown keys keep working (same precedent as the additive
+					// `severity` event field in M2); a bump would force every consumer
+					// to migrate for no breaking change.
+					const engine = await loadEngine();
+					const learner = engine ? await collectLearnerExportField(config, engine) : undefined;
 					const snapshot = {
 						schema: EXPORT_SCHEMA,
 						generatedAt: new Date().toISOString(),
@@ -1719,6 +1862,7 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 						vocab,
 						reviews,
 						tips,
+						...(learner ? { learner } : {}),
 					};
 					try {
 						writeFileSync(EXPORT_PATH, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
@@ -1774,6 +1918,21 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 				} catch (error) {
 					ctx.ui.notify(`Language Coach: rebuild failed (${String(error)})`, "warning");
 				}
+				return;
+			}
+
+			if (trimmed === "interview-brief") {
+				const config = loadConfig();
+				if (!config) {
+					ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
+					return;
+				}
+				const engine = await loadEngine();
+				if (!engine) {
+					ctx.ui.notify("Language Coach: engine unavailable; cannot build the interview brief.", "warning");
+					return;
+				}
+				await runInterviewBrief(ctx, config, engine);
 				return;
 			}
 

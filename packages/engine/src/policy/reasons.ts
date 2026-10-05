@@ -78,3 +78,15 @@ export function renderDrillReason(data: DrillReasonData): string {
         : `Vocabulary recall due ${data.overdueDays} ${plural(data.overdueDays, "day", "days")} ago.`;
   }
 }
+
+/** Template data for interview focus reasons (M5 consumes these). */
+export type InterviewReasonData = { template: "strong-area"; masteryPct: number };
+
+/**
+ * Render a deterministic interview strong-area reason. Weak areas reuse the
+ * drill "lowest-mastery" template (`renderDrillReason`); only the strong-area
+ * wording is interview-specific.
+ */
+export function renderInterviewReason(data: InterviewReasonData): string {
+  return `Mastery ${data.masteryPct}% — a strong area to lean on.`;
+}
