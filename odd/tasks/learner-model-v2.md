@@ -24,3 +24,8 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
 
 - `b87cf7f` docs(odd): add Learner Model v2 architecture with split engine decision (branch `feature/learner-model-v2`)
 - M0 implemented by gentle-ai-worker; verified by gentle-ai-verify: 4/4 PASS (install, tsc --noEmit, 29/29 vitest, boundary greps clean, workspace wiring OK)
+- M0 commit `c8725d6` reviewed natively (lineage `review-002572e4ac6ec825`, medium tier, lens review-reliability): **approved**, authority acknowledged/burned. 4 non-blocking SUGGESTION findings for later work:
+  - R3-001 packages/engine/src/learner/store.ts:48
+  - R3-002 packages/engine/src/engine/fold.ts:271
+  - R3-003 packages/engine/src/engine/fold.ts:293
+  - R3-004 packages/engine/src/learner/store.ts:53
