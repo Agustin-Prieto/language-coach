@@ -15,13 +15,19 @@ export function at(offsetMinutes: number): string {
   return new Date(NOW.getTime() + offsetMinutes * 60_000).toISOString();
 }
 
-export function detected(patternId: string, category = "articles", ts: string = T0): MistakeDetectedEvent {
+export function detected(
+  patternId: string,
+  category = "articles",
+  ts: string = T0,
+  severity?: "low" | "medium" | "high",
+): MistakeDetectedEvent {
   return {
     schemaVersion: 1,
     type: "mistake_detected",
     timestamp: ts,
     patternId,
     category,
+    ...(severity !== undefined ? { severity } : {}),
     original: "a apple",
     correction: "an apple",
   };

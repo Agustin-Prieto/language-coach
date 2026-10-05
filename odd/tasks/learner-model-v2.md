@@ -15,7 +15,7 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
 ## Later milestones (from architecture doc)
 
 - [x] M1 — Learner Model complete: legacy JSONL importer (log/vocab/vocab-reviews parsed; tips reported unmapped), `EventBase.metadata?` additive field, `SnapshotVersionError` guard, `rebuildEvents`/`rebuildSnapshot` reusing fold/store; 48/48 tests
-- [ ] M2 — Mistake intelligence: taxonomy catalog, classifier port + zod schema, mastery + status transitions
+- [x] M2 — Mistake intelligence: taxonomy catalog v1 (6 seeded patterns), pending-pattern store, zod classifier boundary (typed rejections, strict schemas), typed event factories, severity-weighted mastery {low 0.5, medium 1.0, high 1.5}; 109/109 tests; zod added as first runtime dep
 - [ ] M3 — Adaptive coach: policy functions, context budget, prompt directives
 - [ ] M4 — Personalized drills
 - [ ] M5 — Interview + web integration
@@ -34,3 +34,4 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
   - R3-001 (WARNING) packages/engine/src/legacy/import.ts:108
   - R3-002 packages/engine/src/events/sort.ts:9
   - R3-003 packages/engine/src/learner/store.ts:83
+- M2 implemented by gentle-ai-worker (RED→GREEN observed); verified by gentle-ai-verify: 6/6 PASS (tsc, 109/109 vitest, closed-vocabulary rules, anti-hallucination boundary, rejection safety, purity, zod-only lockfile delta)

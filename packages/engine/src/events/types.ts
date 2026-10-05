@@ -38,6 +38,14 @@ export interface MistakeDetectedEvent extends EventBase {
   type: "mistake_detected";
   patternId: string;
   category: string;
+  /**
+   * How hard this detection should pull mastery down. Additive in M2;
+   * absent for pre-M2 events, which reducers treat as "medium".
+   * schemaVersion stays 1 (additive optional field).
+   */
+  severity?: "low" | "medium" | "high";
+  /** Subcategory from the taxonomy catalog. Additive in M2; optional. */
+  subcategory?: string;
   /** The incorrect text produced by the learner. */
   original: string;
   /** The corrected text proposed by the coach. */
@@ -91,10 +99,16 @@ export interface InterviewCompletedEvent extends EventBase {
 /**
  * Classifier output failed schema validation. Rejected analyses are audit
  * events only: they never mutate the model (closed-vocabulary rule).
+ *
+ * `reason` is one of the closed analysis reason codes (schema_mismatch,
+ * unknown_pattern, missing_fields, port_error); `summary` is a truncated,
+ * deterministic error summary (additive in M2, schemaVersion stays 1).
  */
 export interface AnalysisRejectedEvent extends EventBase {
   type: "analysis_rejected";
   reason: string;
+  /** Truncated deterministic error summary; absent for pre-M2 events. */
+  summary?: string;
 }
 
 export type LanguageEvent =
