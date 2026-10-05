@@ -1,0 +1,17 @@
+{
+  "name": "@language-coach/engine",
+  "version": "0.0.0",
+  "description": "Deterministic learner model core for language-coach: events in, Learner Model out. No Pi, no LLM, no network.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
