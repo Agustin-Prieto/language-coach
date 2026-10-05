@@ -6,7 +6,11 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    dependencies:
+      '@language-coach/engine':
+        specifier: workspace:*
+        version: link:packages/engine
 
   packages/engine:
     dependencies:

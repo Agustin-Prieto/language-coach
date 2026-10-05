@@ -8,5 +8,8 @@
   "pi": {
     "extensions": ["./extensions"],
     "skills": ["./skills"]
+  },
+  "dependencies": {
+    "@language-coach/engine": "workspace:*"
   }
 }

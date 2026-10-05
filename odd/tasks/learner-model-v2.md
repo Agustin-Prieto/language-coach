@@ -17,7 +17,7 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
 - [x] M1 — Learner Model complete: legacy JSONL importer (log/vocab/vocab-reviews parsed; tips reported unmapped), `EventBase.metadata?` additive field, `SnapshotVersionError` guard, `rebuildEvents`/`rebuildSnapshot` reusing fold/store; 48/48 tests
 - [x] M2 — Mistake intelligence: taxonomy catalog v1 (6 seeded patterns), pending-pattern store, zod classifier boundary (typed rejections, strict schemas), typed event factories, severity-weighted mastery {low 0.5, medium 1.0, high 1.5}; 109/109 tests; zod added as first runtime dep
 - [x] M3a — Adaptive coach (engine): pure `decideCorrection` policy (regressed > mastery band > status), `dueForReview`, bounded `selectContext` with caps + deterministic token estimate, templated reasons; 148/148 tests
-- [ ] M3b — Adapter wiring: Pi extension consumes engine (classifier port, policy-driven coach block, `/coach rebuild`)
+- [x] M3b — Adapter wiring: Pi extension consumes engine (engine barrel + dist packaging, 🏷️ classification riding the coach block with closed-list ids, policy directives in overlay, event recording with pending-store routing + analysis_rejected fallbacks, `/language rebuild` with confirm, full try/catch degradation to legacy behavior)
 - [ ] M4 — Personalized drills
 - [ ] M5 — Interview + web integration
 
@@ -43,3 +43,4 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
   - R3-002 packages/engine/src/selection/context.ts:85-128
   - R3-003 packages/engine/test/policy-correction.test.ts:117-162
   - R3-004 packages/engine/test/selection-context.test.ts:130-161
+- M3b implemented by gentle-ai-worker; verified by gentle-ai-verify: 5/5 PASS (build dist, 148/148 vitest, engine boundary greps, degradation safety on all 4 entry points, closed-vocabulary routing, workspace wiring). Informational: overlay cap slice keeps registry ids before due/active candidates — revisit if registry grows past cap.
