@@ -35,3 +35,4 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
   - R3-002 packages/engine/src/events/sort.ts:9
   - R3-003 packages/engine/src/learner/store.ts:83
 - M2 implemented by gentle-ai-worker (RED→GREEN observed); verified by gentle-ai-verify: 6/6 PASS (tsc, 109/109 vitest, closed-vocabulary rules, anti-hallucination boundary, rejection safety, purity, zod-only lockfile delta)
+- M2 commit `7429ff1` reviewed natively (lineage `review-9a5ead384aa6aff8`, medium tier, lens review-reliability): **approved with zero findings**, authority acknowledged/burned
