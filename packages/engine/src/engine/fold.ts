@@ -41,6 +41,18 @@ import type {
 /** EWMA learning rate for mastery updates. */
 const MASTERY_ALPHA = 0.3;
 
+/**
+ * Severity multiplier on the EWMA update for `mistake_detected` (M2). A
+ * detection pulls mastery toward 0 (outcome 0); higher-severity mistakes
+ * pull harder. Weights are a documented deterministic table:
+ *
+ *   mastery' = mastery + ALPHA * WEIGHT[severity] * (outcome - mastery)
+ *
+ * Events without a severity (pre-M2 history) use the medium weight 1.0,
+ * reproducing the exact pre-M2 trajectory.
+ */
+const SEVERITY_MASTERY_WEIGHT = { low: 0.5, medium: 1.0, high: 1.5 } as const;
+
 /** Mistake status thresholds: mastery >= 0.4 → review, >= 0.8 → mastered. */
 const MASTERY_REVIEW = 0.4;
 const MASTERY_MASTERED = 0.8;
@@ -137,7 +149,7 @@ export function reduceMessageAnalyzed(model: LearnerModel, _event: MessageAnalyz
 export function reduceMistakeDetected(model: LearnerModel, event: MistakeDetectedEvent, at: Date): LearnerModel {
   const next = cloneModel(model);
   const profile = { ...ensureMistake(next, event.patternId, event.category, at) };
-  const mastery = applyMastery(profile.mastery, 0);
+  const mastery = applyMastery(profile.mastery, 0, severityWeight(event.severity));
   // Explicit transition: a mastered pattern that slips again regresses.
   const status: MistakeStatus =
     profile.status === "mastered"
@@ -320,8 +332,13 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function applyMastery(current: number, outcome: 0 | 1): number {
-  return clamp01(current + MASTERY_ALPHA * (outcome - current));
+function applyMastery(current: number, outcome: 0 | 1, weight = 1): number {
+  return clamp01(current + MASTERY_ALPHA * weight * (outcome - current));
+}
+
+/** Severity weight for a detection; pre-M2 events (no severity) weigh 1.0. */
+function severityWeight(severity: "low" | "medium" | "high" | undefined): number {
+  return severity === undefined ? 1 : SEVERITY_MASTERY_WEIGHT[severity];
 }
 
 /**
