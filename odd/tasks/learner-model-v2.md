@@ -53,3 +53,8 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
 - M4 commit `2fa200f` reviewed natively (lineage `review-93069f3f018d71e2`, medium tier, lens review-reliability): **approved**, authority acknowledged/burned. Non-blocking finding for later work:
   - R3-001 (WARNING) extensions/language-coach.ts:495-499
 - M4.1 writer timed out after mostly completing the work; finished inline (one stale comment at selection/context.ts:164); verified by gentle-ai-verify: 5/6 then inline fix → all green. Commit `c4bf30f` reviewed natively (lineage `review-0792197277439cfb`, medium tier, lens review-reliability): **approved**, authority acknowledged/burned. Non-blocking suggestion: extensions/language-coach.ts:525
+- M5 implemented by gentle-ai-worker (worker failed to report; tree assessed directly, work complete); verified by gentle-ai-verify: 6/6 PASS (build, tsc, 201/201 vitest, interview selection purity/stability, brief degradation pattern, export additive v1, docs accuracy, boundary greps). Commit `3bba114` reviewed natively (lineage `review-a8facb7657ce72a0`, medium tier, lens review-reliability; first reviewer capture refused at admission with a malformed payload — fresh STATUS reoffered the slot, second run admitted): **approved**, authority acknowledged/burned. Non-blocking findings for later work:
+  - R3-001 (WARNING) packages/engine/src/selection/interview.ts:76
+  - R3-002 packages/engine/src/selection/interview.ts:114
+  - R3-003 (WARNING) extensions/language-coach.ts:568
+- FEATURE COMPLETE: M0–M5 all implemented, reviewed, and stacked as PRs #2–#9.
