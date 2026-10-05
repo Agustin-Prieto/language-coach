@@ -227,9 +227,20 @@ export function reduceReviewCompleted(model: LearnerModel, event: ReviewComplete
 }
 
 /**
- * A drill item was completed. Mistake drills update the mistake profile and
- * its SRS state; vocabulary drills count as (possibly incorrect) usage —
- * drill-driven recognition scheduling arrives in M4.
+ * A drill item was completed. Both item kinds share ONE documented scheduling
+ * behavior (M4.1): SRS state advances through the same `schedule` helper used
+ * by scheduled reviews — a successful drill moves `nextReviewAt` out by the
+ * interval picked from SRS_INTERVAL_DAYS by the cumulative successful-review
+ * count (clamped at 30 days); a failed one reschedules to the first interval
+ * tomorrow. `reviewCount`, `successfulReviews`, and `failedReviews` count
+ * every drill result.
+ *
+ * Mistake drills additionally update the mistake profile (EWMA mastery +
+ * status table). Occurrence counters are NOT touched: drills are practice,
+ * not conversation occurrences. Vocabulary drills also count as (possibly
+ * incorrect) usage — the usage counters and derived status follow the exact
+ * same derivation as `vocabulary_used` — while recognition scheduling lands
+ * on the VocabularyProfile's own SRS state.
  */
 export function reduceDrillCompleted(model: LearnerModel, event: DrillCompletedEvent, at: Date): LearnerModel {
   if (event.kind === "mistake") {
@@ -246,14 +257,19 @@ export function reduceDrillCompleted(model: LearnerModel, event: DrillCompletedE
     };
     return touch(next, at);
   }
-  const syntheticUse: VocabularyUsedEvent = {
-    schemaVersion: 1,
-    type: "vocabulary_used",
-    timestamp: event.timestamp,
-    lemma: event.itemId,
-    correct: event.successful,
+  const next = cloneModel(model);
+  const existing = next.vocabulary[event.itemId] ?? createVocabularyProfile(event.itemId, at);
+  const usageCount = existing.usageCount + 1;
+  const correctUses = existing.correctUses + (event.successful ? 1 : 0);
+  next.vocabulary[event.itemId] = {
+    ...existing,
+    usageCount,
+    correctUses,
+    srs: schedule(existing.srs, at, event.successful),
+    status: deriveVocabularyStatus(correctUses, usageCount),
+    lastSeenAt: at.toISOString(),
   };
-  return reduceVocabularyUsed(model, syntheticUse, at);
+  return touch(next, at);
 }
 
 /**

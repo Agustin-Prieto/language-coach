@@ -161,7 +161,8 @@ function selectActivePatternIds(model: LearnerModel, caps: ContextCaps): string[
 /**
  * Due vocabulary: reuses the existing SRS fields on VocabularyProfile
  * (`nextReviewAt` at or before `now`; drill-driven recognition scheduling
- * arrives in M4). Sorted by nextReviewAt then lemma, capped.
+ * has landed — see reduceDrillCompleted in engine/fold.ts). Sorted by
+ * nextReviewAt then lemma, capped.
  */
 function selectDueVocabulary(model: LearnerModel, caps: ContextCaps, nowMs: number): VocabularyProfile[] {
   return Object.values(model.vocabulary)

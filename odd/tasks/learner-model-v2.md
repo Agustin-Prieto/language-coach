@@ -19,6 +19,7 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
 - [x] M3a — Adaptive coach (engine): pure `decideCorrection` policy (regressed > mastery band > status), `dueForReview`, bounded `selectContext` with caps + deterministic token estimate, templated reasons; 148/148 tests
 - [x] M3b — Adapter wiring: Pi extension consumes engine (engine barrel + dist packaging, 🏷️ classification riding the coach block with closed-list ids, policy directives in overlay, event recording with pending-store routing + analysis_rejected fallbacks, `/language rebuild` with confirm, full try/catch degradation to legacy behavior)
 - [x] M4 — Personalized drills: deterministic cloze drills from catalog data (all 6 patterns), code-graded answers, self-graded vocab flashcards, `selectDrillItems` with DRILL_CAPS, drill results as events via `makeDrillCompleted`, `/language drill` interactive loop; 180/180 tests. Follow-up: vocabulary drill results don't schedule `nextReviewAt` yet (reducer gap)
+- M4.1 — Completion pass: vocabulary drill SRS scheduling (shared `schedule` helper, failure resets), one-time idempotent legacy import bootstrap (marker + zero-event guard), legacy provenance line in `/language rebuild` report; 185/185 tests
 - [ ] M5 — Interview + web integration
 
 ## Evidence
@@ -51,3 +52,4 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
 - M4 implemented by gentle-ai-worker; verified by gentle-ai-verify: 6/6 PASS (build, tsc, 180/180 vitest, determinism, no-LLM drill path, event discipline via makeDrillCompleted, fold integration, additive catalog shape)
 - M4 commit `2fa200f` reviewed natively (lineage `review-93069f3f018d71e2`, medium tier, lens review-reliability): **approved**, authority acknowledged/burned. Non-blocking finding for later work:
   - R3-001 (WARNING) extensions/language-coach.ts:495-499
+- M4.1 writer timed out after mostly completing the work; finished inline (one stale comment at selection/context.ts:164); verified by gentle-ai-verify: 5/6 then inline fix → all green. Commit `c4bf30f` reviewed natively (lineage `review-0792197277439cfb`, medium tier, lens review-reliability): **approved**, authority acknowledged/burned. Non-blocking suggestion: extensions/language-coach.ts:525

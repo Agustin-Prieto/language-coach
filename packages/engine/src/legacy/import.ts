@@ -87,7 +87,7 @@ const TIPS_UNMAPPED_REASON =
   "Legacy corrective tips are not imported: no existing event type carries corrective tips today.";
 
 /** Stable identifier for imported vocabulary-review drills. */
-const VOCAB_REVIEW_DRILL_ID = "vocab-review";
+export const VOCAB_REVIEW_DRILL_ID = "vocab-review";
 
 export function importLegacyLogs(input: LegacyImportInput): LegacyImportResult {
   const report: LegacyMappingReport = {
