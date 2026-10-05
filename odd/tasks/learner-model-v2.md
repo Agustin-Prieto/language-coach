@@ -49,3 +49,5 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
   - R3-002 extensions/language-coach.ts:280-281
   - R3-003 extensions/language-coach.ts:414-418
 - M4 implemented by gentle-ai-worker; verified by gentle-ai-verify: 6/6 PASS (build, tsc, 180/180 vitest, determinism, no-LLM drill path, event discipline via makeDrillCompleted, fold integration, additive catalog shape)
+- M4 commit `2fa200f` reviewed natively (lineage `review-93069f3f018d71e2`, medium tier, lens review-reliability): **approved**, authority acknowledged/burned. Non-blocking finding for later work:
+  - R3-001 (WARNING) extensions/language-coach.ts:495-499
