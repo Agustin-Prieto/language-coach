@@ -7,7 +7,7 @@ import {
 } from "gentle-shell-lib/shell-card.ts";
 import { sidebarState, type SidebarRail } from "gentle-shell-lib/shell-sidebar.ts";
 import { installSidebar, invalidateSidebar } from "gentle-shell-lib/shell-sidebar-layout.ts";
-import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 // Static type-only import: erased at runtime, so a missing/broken engine
@@ -38,6 +38,8 @@ const EXPORT_SCHEMA = "language-coach-export/v1";
 // never hardcodes one. The legacy language-coach-*.jsonl files above stay
 // exactly as they are — the engine log is a separate, append-only store.
 const ENGINE_DATA_DIR = join(homedir(), ".pi", "agent", "language-coach");
+/** Marker for the one-time legacy import bootstrap (see bootstrapLegacyImport). */
+const LEGACY_IMPORT_MARKER_FILE = "legacy-imported.json";
 
 type EngineApi = typeof EngineModule;
 let engineModule: EngineApi | null | undefined;
@@ -51,7 +53,98 @@ async function loadEngine(): Promise<EngineApi | null> {
 		// Load failures are cached; surface once, never break the session.
 		console.error(`[language-coach] engine unavailable, coach degrades to legacy behavior: ${String(error)}`);
 	}
+	if (engineModule) {
+		// One-time legacy import bootstrap (M4.1). Awaited so the first engine
+		// consumer sees post-import state; the helper catches every failure and
+		// only debug-logs, so engine loading can never break the session.
+		await bootstrapLegacyImport(engineModule);
+	}
 	return engineModule;
+}
+
+/** Per-process guard: the bootstrap runs at most once per session. */
+let legacyBootstrapStarted = false;
+
+/** Marker payload persisted after a completed (possibly empty) bootstrap. */
+interface LegacyImportMarker {
+	importedAt: string;
+	eventCount: number;
+}
+
+/**
+ * One-time deterministic bootstrap: seed the engine event store from the four
+ * legacy JSONL files via the engine importer (M1), so the Learner Model starts
+ * from real history instead of an empty log.
+ *
+ * Idempotency rules, checked in this order:
+ * 1. Marker file `legacy-imported.json` present → NEVER import again, even if
+ *    the store is empty (a deliberate `/language rebuild` or manual event-log
+ *    cleanup must not resurrect imported events).
+ * 2. Store non-empty → NEVER import (once the store has any event it is the
+ *    source of truth; imported history must never duplicate).
+ * Only when the store has ZERO events AND no marker exists are the legacy
+ * files read. Missing files simply skip that source; tips are never imported
+ * (no event type carries them — the importer reports them unmapped).
+ *
+ * On success the marker `{ importedAt, eventCount }` is written — an
+ * eventCount of 0 still counts: "nothing to import" is a completed bootstrap.
+ * The cached learner.json snapshot is then refreshed so the first consumer
+ * sees post-import state; a snapshot failure is non-fatal (consumers rebuild
+ * on demand from the event log).
+ *
+ * Any failure is debug-logged and swallowed: coaching must never break. The
+ * per-process guard plus the marker keep this exactly once per install under
+ * normal operation; concurrent first runs from separate processes are not
+ * expected (engine-touching paths are gated to the main session).
+ */
+async function bootstrapLegacyImport(engine: EngineApi): Promise<void> {
+	if (legacyBootstrapStarted) return;
+	legacyBootstrapStarted = true;
+	try {
+		const config = loadConfig();
+		if (!config) {
+			debugLog("legacy import bootstrap skipped: no configured language pair yet");
+			return;
+		}
+		const markerPath = join(ENGINE_DATA_DIR, LEGACY_IMPORT_MARKER_FILE);
+		if (existsSync(markerPath)) return; // rule 1: already imported once
+		const store = engine.createEventStore(ENGINE_DATA_DIR);
+		const { events } = await store.readEvents();
+		if (events.length > 0) return; // rule 2: the store is already live
+
+		// Missing legacy files are fine: each read returns undefined and the
+		// importer skips that source.
+		const readLegacy = (path: string): string | undefined => {
+			try {
+				return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+			} catch (error) {
+				debugLog(`legacy import bootstrap: skipping unreadable ${path}: ${String(error)}`);
+				return undefined;
+			}
+		};
+		const seed = { languagePair: { native: config.nativeLanguage, target: config.targetLanguage } };
+		const { events: imported, report } = engine.importLegacyLogs({
+			seed,
+			logs: readLegacy(LOG_PATH),
+			vocabCaptures: readLegacy(VOCAB_PATH),
+			vocabReviews: readLegacy(VOCAB_REVIEWS_PATH),
+			tips: readLegacy(TIPS_PATH),
+		});
+		for (const event of imported) await store.append(event);
+		mkdirSync(ENGINE_DATA_DIR, { recursive: true });
+		const marker: LegacyImportMarker = { importedAt: new Date().toISOString(), eventCount: imported.length };
+		writeFileSync(markerPath, `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+		try {
+			await engine.rebuildSnapshot(ENGINE_DATA_DIR, seed, new Date());
+		} catch (error) {
+			debugLog(`legacy import bootstrap: snapshot refresh failed (consumers will rebuild): ${String(error)}`);
+		}
+		debugLog(
+			`legacy import bootstrap: ${imported.length} event(s) imported, ${report.tips.parsed} tip(s) left unmapped`,
+		);
+	} catch (error) {
+		debugLog(`legacy import bootstrap failed (coaching continues): ${String(error)}`);
+	}
 }
 
 function debugLog(message: string): void {
@@ -450,6 +543,21 @@ async function recordCoachEvents(config: CoachConfig, block: string): Promise<vo
 	} catch (error) {
 		debugLog(`engine event recording failed: ${String(error)}`);
 	}
+}
+
+/**
+ * Deterministic legacy-import detection for the rebuild report. The M1
+ * importer writes three shapes: log entries carry `metadata.legacyKind`,
+ * vocabulary captures carry `metadata.translation`, and vocabulary reviews
+ * are `drill_completed` events with the importer's stable `drillId`
+ * (engine's VOCAB_REVIEW_DRILL_ID). Everything else in the store was
+ * produced after the import.
+ */
+function isLegacyImportedEvent(event: EngineModule.LanguageEvent): boolean {
+	if (event.type === "message_analyzed") return typeof event.metadata?.legacyKind === "string";
+	if (event.type === "vocabulary_detected") return event.metadata !== undefined && "translation" in event.metadata;
+	if (event.type === "drill_completed") return event.drillId === "vocab-review";
+	return false;
 }
 
 /**
@@ -1652,7 +1760,15 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 						{ languagePair: { native: config.nativeLanguage, target: config.targetLanguage } },
 						new Date(),
 					);
-					const done = `Learner model rebuilt: ${summary.eventCount} event${summary.eventCount === 1 ? "" : "s"}, ${summary.skippedLines} skipped line${summary.skippedLines === 1 ? "" : "s"} → ${snapshotPath}`;
+					// M4.1 provenance line: count the events the legacy importer marked
+					// as its own (deterministic shapes — see isLegacyImportedEvent).
+					const { events: storeEvents } = await engine.createEventStore(ENGINE_DATA_DIR).readEvents();
+					const legacyCount = storeEvents.filter(isLegacyImportedEvent).length;
+					const legacyLine =
+						legacyCount > 0
+							? `Legacy import: ${legacyCount} event${legacyCount === 1 ? "" : "s"} in the store`
+							: "Legacy import: none in the store";
+					const done = `Learner model rebuilt: ${summary.eventCount} event${summary.eventCount === 1 ? "" : "s"}, ${summary.skippedLines} skipped line${summary.skippedLines === 1 ? "" : "s"} → ${snapshotPath}\n${legacyLine}`;
 					if (ctx.hasUI) ctx.ui.notify(done, "info");
 					else console.log(done);
 				} catch (error) {

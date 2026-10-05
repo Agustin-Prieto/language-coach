@@ -14,6 +14,7 @@
  * - drill     — deterministic drill selection, answer checking, result application
  * - taxonomy  — closed catalog registry + pending-proposal store
  * - analysis  — zod classifier boundary schemas + rejection reason codes
+ * - legacy    — one-time deterministic migration of the pre-engine JSONL logs
  */
 
 // Events ---------------------------------------------------------------------------
@@ -119,3 +120,16 @@ export { InvalidProposalError, PendingStoreError, UnknownPendingProposalError } 
 // Analysis boundary (zod schemas + rejection codes) -----------------------------------
 export { AnalysisReasonCodes, truncateRejectionSummary } from "./analysis/schema.js";
 export type { AnalysisReasonCode, AnalysisRejection, Severity } from "./analysis/schema.js";
+
+// Legacy import (deterministic migration of pre-engine JSONL logs) ---------------------
+// Host adapters call `importLegacyLogs` once at bootstrap to seed the event
+// store from the four legacy files; see src/legacy/import.ts for the mapping
+// table and ordering guarantees.
+export { importLegacyLogs, VOCAB_REVIEW_DRILL_ID } from "./legacy/import.js";
+export type {
+  LegacyImportInput,
+  LegacyImportResult,
+  LegacyMappingReport,
+  LegacySourceReport,
+  LegacyUnmappedSource,
+} from "./legacy/import.js";
