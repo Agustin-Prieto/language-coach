@@ -38,3 +38,8 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
 - M2 implemented by gentle-ai-worker (RED→GREEN observed); verified by gentle-ai-verify: 6/6 PASS (tsc, 109/109 vitest, closed-vocabulary rules, anti-hallucination boundary, rejection safety, purity, zod-only lockfile delta)
 - M2 commit `7429ff1` reviewed natively (lineage `review-9a5ead384aa6aff8`, medium tier, lens review-reliability): **approved with zero findings**, authority acknowledged/burned
 - M3a implemented by gentle-ai-worker (RED→GREEN observed); verified by gentle-ai-verify: 5/5 PASS (tsc, 148/148 vitest, policy exhaustiveness, selection stability, no LLM in policy, additive-only helpers)
+- M3a commit `070b034` reviewed natively (lineage `review-88c25a7a8fe5eb6e`, medium tier, lens review-reliability): **approved**, authority acknowledged/burned. Non-blocking suggestions for later work:
+  - R3-001 packages/engine/src/policy/correction.ts:43-98
+  - R3-002 packages/engine/src/selection/context.ts:85-128
+  - R3-003 packages/engine/test/policy-correction.test.ts:117-162
+  - R3-004 packages/engine/test/selection-context.test.ts:130-161
