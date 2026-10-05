@@ -44,3 +44,7 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
   - R3-003 packages/engine/test/policy-correction.test.ts:117-162
   - R3-004 packages/engine/test/selection-context.test.ts:130-161
 - M3b implemented by gentle-ai-worker; verified by gentle-ai-verify: 5/5 PASS (build dist, 148/148 vitest, engine boundary greps, degradation safety on all 4 entry points, closed-vocabulary routing, workspace wiring). Informational: overlay cap slice keeps registry ids before due/active candidates — revisit if registry grows past cap.
+- M3b commit `e4b4eef` reviewed natively (lineage `review-e3852b2b82a9b07d`, medium tier, lens review-reliability): **approved**, authority acknowledged/burned. Non-blocking findings for later work:
+  - R3-001 (WARNING) extensions/language-coach.ts:414-418
+  - R3-002 extensions/language-coach.ts:280-281
+  - R3-003 extensions/language-coach.ts:414-418
