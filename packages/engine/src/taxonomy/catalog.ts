@@ -12,6 +12,16 @@
  *    registry entry through a code-review commit that edits this file and
  *    bumps `CATALOG_VERSION`.
  *
+ * DRILL DATA (`drill` field)
+ *
+ * Each registry entry may carry an optional cloze exercise (`drill`) used by
+ * the deterministic drill module (`drill/select.ts`, `drill/check.ts`). Drill
+ * data is curated registry metadata exactly like `canonicalExamples`: it
+ * enters the registry through the SAME code-review canonicalization path as
+ * the pattern itself — never at runtime, never from chat, never from the
+ * classifier. A pattern without `drill` is simply skipped by drill selection
+ * (e.g. future `fluency` patterns), never synthesized.
+ *
  * Patterns are NEVER added at runtime, from chat, or by the classifier. The
  * classifier only picks ids from this closed list (enforced at parse time by
  * `analysis/schema.ts`) or reports "uncategorized".
@@ -37,6 +47,21 @@ export const TAXONOMY_SUBCATEGORIES: Record<TaxonomyCategory, readonly string[]>
   fluency: [],
 };
 
+/**
+ * A fill-in-the-blank exercise grounded in the pattern's real correction
+ * semantics. `cloze` is a canonical sentence with `___` marking the blank;
+ * `answer` is the word (or short phrase) that fills it; `hint` is optional
+ * help shown before the learner answers. Answers are checked by code via
+ * documented normalization (see `drill/check.ts`), never by an LLM.
+ */
+export interface PatternDrill {
+  /** Sentence with `___` marking the blank. */
+  cloze: string;
+  /** The expected answer for the blank. */
+  answer: string;
+  hint?: string;
+}
+
 /** One registry entry: a recurring, named mistake pattern. */
 export interface TaxonomyPattern {
   patternId: string;
@@ -46,6 +71,12 @@ export interface TaxonomyPattern {
   description: string;
   /** Ground-truth example corrections, ideally from the learner's real history. */
   canonicalExamples?: string[];
+  /**
+   * Optional cloze exercise for deterministic drills. Additive optional
+   * metadata: CATALOG_VERSION stays 1 (same precedent as the additive
+   * `severity`/`subcategory` event fields in M2).
+   */
+  drill?: PatternDrill;
 }
 
 /**
@@ -68,6 +99,11 @@ const REGISTRY: readonly TaxonomyPattern[] = [
     subcategory: "prepositions",
     description: "Uses 'since' with a duration instead of 'for' (e.g. 'since three years' → 'for three years').",
     canonicalExamples: ["since three years → for three years"],
+    drill: {
+      cloze: "I have worked here ___ three years.",
+      answer: "for",
+      hint: "Durations take 'for'; 'since' needs a starting point.",
+    },
   },
   {
     patternId: "article-the",
@@ -75,6 +111,11 @@ const REGISTRY: readonly TaxonomyPattern[] = [
     subcategory: "articles",
     description: "Drops or misselects definite/indefinite articles (e.g. 'a apple' → 'an apple').",
     canonicalExamples: ["a apple → an apple", "I went to cinema → I went to the cinema"],
+    drill: {
+      cloze: "I went to ___ cinema last night.",
+      answer: "the",
+      hint: "Specific places usually take the definite article.",
+    },
   },
   {
     patternId: "missing-apostrophe",
@@ -82,6 +123,11 @@ const REGISTRY: readonly TaxonomyPattern[] = [
     subcategory: "punctuation",
     description: "Omits the apostrophe in contractions (e.g. 'lets' → 'let's', 'dont' → 'don't').",
     canonicalExamples: ["lets go → let's go", "dont know → don't know"],
+    drill: {
+      cloze: "___ go to the park this afternoon.",
+      answer: "let's",
+      hint: "Contractions keep their apostrophe.",
+    },
   },
   {
     patternId: "web-locals",
@@ -89,6 +135,11 @@ const REGISTRY: readonly TaxonomyPattern[] = [
     subcategory: "collocation",
     description: "Non-idiomatic compression 'web locals' for apps executed locally; prefer 'web apps locally'.",
     canonicalExamples: ["web locals → web apps locally"],
+    drill: {
+      cloze: "You can run the ___ locally on your machine.",
+      answer: "web apps",
+      hint: "The idiomatic phrase is 'web apps', not 'web locals'.",
+    },
   },
   {
     patternId: "third-person-s",
@@ -96,6 +147,11 @@ const REGISTRY: readonly TaxonomyPattern[] = [
     subcategory: "agreement",
     description: "Drops the third-person singular -s in the present simple (e.g. 'he go' → 'he goes').",
     canonicalExamples: ["he go → he goes", "she like → she likes"],
+    drill: {
+      cloze: "She ___ to work by train every day.",
+      answer: "goes",
+      hint: "Third-person singular takes -s in the present simple.",
+    },
   },
   {
     patternId: "irregular-past-simple",
@@ -103,6 +159,11 @@ const REGISTRY: readonly TaxonomyPattern[] = [
     subcategory: "tense",
     description: "Regularizes irregular past forms (e.g. 'I goed' → 'I went').",
     canonicalExamples: ["I goed → I went", "she taked → she took"],
+    drill: {
+      cloze: "Yesterday I ___ to the market with my sister.",
+      answer: "went",
+      hint: "Irregular past of 'go'.",
+    },
   },
 ];
 
@@ -119,6 +180,15 @@ for (const pattern of REGISTRY) {
   }
   if (pattern.subcategory !== undefined && !TAXONOMY_SUBCATEGORIES[pattern.category].includes(pattern.subcategory)) {
     throw new Error(`Pattern ${pattern.patternId} references unknown subcategory ${pattern.subcategory}`);
+  }
+  // Curated drill data must be well-formed: a real blank, a real answer.
+  if (pattern.drill !== undefined) {
+    if (!pattern.drill.cloze.includes("___")) {
+      throw new Error(`Pattern ${pattern.patternId} drill cloze must contain a ___ blank`);
+    }
+    if (pattern.drill.answer.trim() === "") {
+      throw new Error(`Pattern ${pattern.patternId} drill answer must be non-empty`);
+    }
   }
 }
 

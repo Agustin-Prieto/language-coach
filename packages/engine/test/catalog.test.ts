@@ -80,4 +80,23 @@ describe("taxonomy catalog", () => {
       }
     }
   });
+
+  it("carries well-formed drill data for every seeded pattern", () => {
+    for (const id of listPatternIds()) {
+      const drill = getPattern(id)?.drill;
+      expect(drill, `drill data for ${id}`).toBeDefined();
+      expect(drill!.cloze).toContain("___");
+      expect(drill!.answer.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it("grounds each drill cloze in the pattern's real correction semantics", () => {
+    // Expected answers derived from the registry's own canonical examples.
+    expect(getPattern("since-vs-for")?.drill).toMatchObject({ cloze: "I have worked here ___ three years.", answer: "for" });
+    expect(getPattern("article-the")?.drill).toMatchObject({ cloze: "I went to ___ cinema last night.", answer: "the" });
+    expect(getPattern("missing-apostrophe")?.drill).toMatchObject({ answer: "let's" });
+    expect(getPattern("web-locals")?.drill).toMatchObject({ answer: "web apps" });
+    expect(getPattern("third-person-s")?.drill).toMatchObject({ answer: "goes" });
+    expect(getPattern("irregular-past-simple")?.drill).toMatchObject({ answer: "went" });
+  });
 });

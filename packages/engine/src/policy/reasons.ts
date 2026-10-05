@@ -51,7 +51,8 @@ export function renderCorrectionReason(data: CorrectionReasonData): string {
 export type DrillReasonData =
   | { template: "recent-mistakes"; count: number; days: number }
   | { template: "due-review"; overdueDays: number }
-  | { template: "lowest-mastery"; masteryPct: number };
+  | { template: "lowest-mastery"; masteryPct: number }
+  | { template: "vocab-due"; overdueDays: number };
 
 /**
  * Render a deterministic drill reason. `count`/`days`/`overdueDays` are
@@ -71,5 +72,9 @@ export function renderDrillReason(data: DrillReasonData): string {
         : `Due for review ${data.overdueDays} ${plural(data.overdueDays, "day", "days")} ago.`;
     case "lowest-mastery":
       return `Mastery ${data.masteryPct}% — one of your weakest patterns.`;
+    case "vocab-due":
+      return data.overdueDays === 0
+        ? "Vocabulary recall due now."
+        : `Vocabulary recall due ${data.overdueDays} ${plural(data.overdueDays, "day", "days")} ago.`;
   }
 }

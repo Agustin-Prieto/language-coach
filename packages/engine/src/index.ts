@@ -11,6 +11,7 @@
  * - engine    — pure fold reducers + empty-model factory
  * - policy    — correction policy (decideCorrection, dueForReview) + reasons
  * - selection — bounded prompt-context selection (selectContext, caps)
+ * - drill     — deterministic drill selection, answer checking, result application
  * - taxonomy  — closed catalog registry + pending-proposal store
  * - analysis  — zod classifier boundary schemas + rejection reason codes
  */
@@ -36,6 +37,7 @@ export {
   EventFactoryError,
   InvalidEventInputError,
   makeAnalysisRejected,
+  makeDrillCompleted,
   makeMistakeCorrected,
   makeMistakeDetected,
   UnknownPatternError,
@@ -79,10 +81,18 @@ export { CORRECTION_THRESHOLDS, decideCorrection, dueForReview } from "./policy/
 export type { CorrectionAction, CorrectionCandidate, CorrectionDecision } from "./policy/correction.js";
 export { renderCorrectionReason, renderDrillReason, toMasteryPercent } from "./policy/reasons.js";
 export type { CorrectionReasonData, DrillReasonData } from "./policy/reasons.js";
+export type { PatternDrill } from "./taxonomy/catalog.js";
 
 // Selection (deterministic context budget) -------------------------------------------
 export { DEFAULT_CONTEXT_CAPS, selectContext, serializeContext } from "./selection/context.js";
 export type { ContextCaps, ContextMistakeEntry, PromptContext } from "./selection/context.js";
+
+// Drills (deterministic selection, checking, result application) -----------------------
+export { DRILL_CAPS, selectDrillItems } from "./drill/select.js";
+export type { DrillCaps, DrillItem, DrillKind } from "./drill/select.js";
+export { checkAnswer, normalizeAnswer } from "./drill/check.js";
+export type { CheckResult } from "./drill/check.js";
+export { applyDrillResult, drillResultEvent } from "./drill/session.js";
 
 // Taxonomy (closed catalog + pending proposals) ---------------------------------------
 export {

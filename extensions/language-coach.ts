@@ -452,6 +452,143 @@ async function recordCoachEvents(config: CoachConfig, block: string): Promise<vo
 	}
 }
 
+/**
+ * Run one `/language drill` session (M4). Deterministic drills only: mistake
+ * exercises come from the taxonomy catalog and are graded by code
+ * (engine.checkAnswer); vocabulary items are self-graded flashcards. Every
+ * answered item is appended as a `drill_completed` event through the engine
+ * factory and persisted with a full snapshot refold — exactly like
+ * recordCoachEvents' degradation discipline: any persistence failure keeps
+ * the drill running but notifies once. The legacy JSONL files are read
+ * (stored vocabulary meanings) but never written.
+ */
+async function runDrillSession(
+	ctx: ExtensionContext,
+	config: CoachConfig,
+	engine: EngineApi,
+): Promise<void> {
+	const seed = { languagePair: { native: config.nativeLanguage, target: config.targetLanguage } };
+	// Load the learner model: cached snapshot, else rebuild from the event log.
+	let model: EngineModule.LearnerModel;
+	try {
+		const snapshot = await engine.readSnapshot(ENGINE_DATA_DIR);
+		if (snapshot) {
+			model = snapshot;
+		} else {
+			const store = engine.createEventStore(ENGINE_DATA_DIR);
+			const { events } = await store.readEvents();
+			model = engine.rebuildEvents(events, seed, new Date());
+		}
+	} catch (error) {
+		ctx.ui.notify(`Language Coach: could not load the learner model (${String(error)})`, "warning");
+		return;
+	}
+
+	let items: EngineModule.DrillItem[];
+	try {
+		items = engine.selectDrillItems(model, engine.DRILL_CAPS, new Date());
+	} catch (error) {
+		ctx.ui.notify(`Language Coach: drill selection failed (${String(error)})`, "warning");
+		return;
+	}
+	if (items.length === 0) {
+		ctx.ui.notify("Nothing due — mastery is healthy.", "info");
+		return;
+	}
+
+	// Stored vocabulary meanings for the self-graded flashcards: read-only
+	// lookup in the legacy vocab store (latest translation wins). The engine
+	// model carries no translation field, and the legacy files stay untouched.
+	const meanings = new Map<string, string>();
+	try {
+		if (existsSync(VOCAB_PATH)) {
+			for (const entry of parseVocabEntries(readFileSync(VOCAB_PATH, "utf8"))) {
+				meanings.set(entry.phrase.toLowerCase(), entry.translation);
+			}
+		}
+	} catch {
+		// Meanings are a nicety; a failed read just means "no stored translation".
+	}
+
+	// Mastery percent per practiced pattern BEFORE the session, for the summary.
+	const masteryBefore = new Map<string, number>();
+	for (const item of items) {
+		if (item.kind !== "mistake") continue;
+		const profile = model.mistakes[item.id];
+		masteryBefore.set(item.id, profile ? engine.toMasteryPercent(profile.mastery) : 0);
+	}
+
+	let attempted = 0;
+	let correct = 0;
+	const practiced = new Set<string>();
+	let saveFailureNotified = false;
+	let latestModel = model; // refreshed from each successful snapshot refold
+	const store = engine.createEventStore(ENGINE_DATA_DIR);
+
+	for (const item of items) {
+		let successful: boolean;
+		if (item.kind === "mistake" && item.exercise) {
+			ctx.ui.notify(`${item.reason} — pattern: ${item.id}`, "info");
+			const answer = await ctx.ui.input(
+				item.exercise.cloze,
+				item.exercise.hint ? `Hint: ${item.exercise.hint}` : "Type the missing word or phrase",
+			);
+			if (answer === undefined || answer.trim() === "") break; // cancelled — end the session
+			const result = engine.checkAnswer(item, answer);
+			attempted++;
+			successful = result.correct;
+			if (result.correct) {
+				correct++;
+				ctx.ui.notify("Correct!", "info");
+			} else {
+				ctx.ui.notify(`Not quite — expected: "${result.expected}"`, "warning");
+			}
+		} else {
+			ctx.ui.notify(`${item.reason} — phrase: ${item.id}`, "info");
+			const recall = await ctx.ui.input(`Recall the meaning of: "${item.id}"`, "Freeform recall attempt (not graded)");
+			if (recall === undefined) break; // cancelled — end the session
+			attempted++;
+			const meaning = meanings.get(item.id.toLowerCase());
+			successful = await ctx.ui.confirm(
+				`Did you recall "${item.id}" correctly?`,
+				meaning ? `Stored meaning: ${meaning}` : "No stored translation found for this phrase.",
+			);
+			if (successful) correct++;
+		}
+		practiced.add(item.id);
+
+		// Persist after EACH answered item: append the factory-validated event,
+		// then refold + write the snapshot. Degrades like recordCoachEvents.
+		try {
+			await store.append(engine.drillResultEvent(item, successful, new Date().toISOString()));
+			const summary = await engine.rebuildSnapshot(ENGINE_DATA_DIR, seed, new Date());
+			latestModel = summary.model;
+		} catch (error) {
+			if (!saveFailureNotified) {
+				saveFailureNotified = true;
+				ctx.ui.notify("Language Coach: could not save drill progress — the drill continues, but this session may not persist.", "warning");
+			}
+			debugLog(`drill persistence failed: ${String(error)}`);
+		}
+	}
+
+	// Summary — every count comes from data, never invented.
+	const lines = [
+		`Drill session complete: ${attempted} attempted, ${correct} correct, ${practiced.size} pattern${practiced.size === 1 ? "" : "s"} practiced`,
+	];
+	const masteryChanges: string[] = [];
+	for (const patternId of practiced) {
+		const before = masteryBefore.get(patternId);
+		const profile = latestModel.mistakes[patternId];
+		if (before !== undefined && profile) {
+			masteryChanges.push(`${patternId} ${before}% → ${engine.toMasteryPercent(profile.mastery)}%`);
+		}
+	}
+	if (masteryChanges.length > 0) lines.push(`Mastery: ${masteryChanges.join(", ")}`);
+	if (saveFailureNotified) lines.push("⚠ Some drill results could not be saved");
+	ctx.ui.notify(lines.join("\n"), "info");
+}
+
 function textFromContent(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (Array.isArray(content)) {
@@ -1303,7 +1440,7 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 	});
 
 	pi.registerCommand("language", {
-		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, export a JSON snapshot, rebuild the learner model, or set mode (on | productivity | off)",
+		description: "Language Coach: show status, run setup, view stats, review vocabulary, run a drill session, write a digest, export a JSON snapshot, rebuild the learner model, or set mode (on | productivity | off)",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim().toLowerCase();
 
@@ -1521,6 +1658,21 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 				} catch (error) {
 					ctx.ui.notify(`Language Coach: rebuild failed (${String(error)})`, "warning");
 				}
+				return;
+			}
+
+			if (trimmed === "drill") {
+				const config = loadConfig();
+				if (!config) {
+					ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
+					return;
+				}
+				const engine = await loadEngine();
+				if (!engine) {
+					ctx.ui.notify("Language Coach: engine unavailable; cannot run drills.", "warning");
+					return;
+				}
+				await runDrillSession(ctx, config, engine);
 				return;
 			}
 

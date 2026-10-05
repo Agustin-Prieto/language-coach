@@ -23,6 +23,11 @@ format.
 - `src/events/` — versioned event union and typed boundary factories
 - `src/learner/` — model types, JSONL store, snapshot IO
 - `src/engine/` — pure fold reducers (EWMA mastery, status, SRS)
+- `src/policy/` — pure correction policy (`decideCorrection`, `dueForReview`)
+  and templated reason strings
+- `src/selection/` — bounded prompt-context selection with caps
+- `src/drill/` — deterministic drill item selection, code-graded answers,
+  and drill-result event application (M4)
 - `src/taxonomy/` — versioned closed catalog (`catalog.ts`) and pending
   proposal store (`pending.ts`)
 - `src/analysis/` — classifier port, zod schemas, rejection mapping

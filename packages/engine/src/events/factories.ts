@@ -13,7 +13,13 @@
 
 import { truncateRejectionSummary, AnalysisRejectedPayloadSchema, type AnalysisRejection } from "../analysis/schema.js";
 import { getPattern } from "../taxonomy/catalog.js";
-import { EventSchemaVersion, type AnalysisRejectedEvent, type MistakeCorrectedEvent, type MistakeDetectedEvent } from "./types.js";
+import {
+  EventSchemaVersion,
+  type AnalysisRejectedEvent,
+  type DrillCompletedEvent,
+  type MistakeCorrectedEvent,
+  type MistakeDetectedEvent,
+} from "./types.js";
 
 /** Base class for all factory errors; catch the family with this. */
 export class EventFactoryError extends Error {
@@ -120,6 +126,38 @@ export function makeMistakeCorrected(input: { patternId: string; timestamp: stri
     timestamp: input.timestamp,
     patternId: pattern.patternId,
     category: pattern.category,
+  };
+}
+
+/**
+ * Build a `drill_completed` event from a completed drill item (M4). The
+ * item ids are validated structurally here so the adapter cannot append a
+ * malformed event: `drillId` and `itemId` must be non-empty and `kind` is
+ * the closed drill-kind union. Registry membership is deliberately NOT
+ * enforced for mistakes: the reducer treats unknown ids as new profiles,
+ * and vocabulary ids are lemmas, never pattern ids.
+ */
+export function makeDrillCompleted(input: {
+  drillId: string;
+  kind: "mistake" | "vocabulary";
+  itemId: string;
+  successful: boolean;
+  timestamp: string;
+}): DrillCompletedEvent {
+  assertValidTimestamp(input.timestamp);
+  assertNonEmpty("drillId", input.drillId);
+  assertNonEmpty("itemId", input.itemId);
+  if (input.kind !== "mistake" && input.kind !== "vocabulary") {
+    throw new InvalidEventInputError(`kind must be "mistake" or "vocabulary", got: ${String(input.kind)}`);
+  }
+  return {
+    schemaVersion: EventSchemaVersion,
+    type: "drill_completed",
+    timestamp: input.timestamp,
+    drillId: input.drillId,
+    kind: input.kind,
+    itemId: input.itemId,
+    successful: input.successful,
   };
 }
 
