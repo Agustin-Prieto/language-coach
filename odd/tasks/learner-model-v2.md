@@ -30,3 +30,7 @@ Decided 2026-10-05 after ChatGPT draft + gentle-shell-inspired adjustments.
   - R3-003 packages/engine/src/engine/fold.ts:293
   - R3-004 packages/engine/src/learner/store.ts:53
 - M1 implemented by gentle-ai-worker (RED→GREEN observed); verified by gentle-ai-verify: 5/5 PASS (tsc, 48/48 vitest, boundary greps clean, mapping honesty, version guard, no duplicated logic)
+- M1 commit `53b1d0b` reviewed natively (lineage `review-6b8daf5e20ece4fd`, medium tier, lens review-reliability): **approved**, authority acknowledged/burned. Non-blocking findings for later work:
+  - R3-001 (WARNING) packages/engine/src/legacy/import.ts:108
+  - R3-002 packages/engine/src/events/sort.ts:9
+  - R3-003 packages/engine/src/learner/store.ts:83
