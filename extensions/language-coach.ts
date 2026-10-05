@@ -10,6 +10,11 @@ import { installSidebar, invalidateSidebar } from "gentle-shell-lib/shell-sideba
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+// Static type-only import: erased at runtime, so a missing/broken engine
+// package can never break extension loading. The runtime module is loaded
+// lazily via loadEngine(); null means "engine unavailable — degrade to the
+// legacy behavior" (no 🏷️ protocol, no directives, no engine events).
+import type * as EngineModule from "@language-coach/engine";
 
 type CoachMode = "on" | "productivity" | "off";
 
@@ -27,6 +32,31 @@ const VOCAB_REVIEWS_PATH = join(homedir(), ".pi", "agent", "language-coach-vocab
 const TIPS_PATH = join(homedir(), ".pi", "agent", "language-coach-tips.jsonl");
 const EXPORT_PATH = join(homedir(), ".pi", "agent", "language-coach-export.json");
 const EXPORT_SCHEMA = "language-coach-export/v1";
+
+// Engine data directory (Learner Model v2): events.jsonl + learner.json +
+// pending-patterns.jsonl live here. The adapter owns all paths; the engine
+// never hardcodes one. The legacy language-coach-*.jsonl files above stay
+// exactly as they are — the engine log is a separate, append-only store.
+const ENGINE_DATA_DIR = join(homedir(), ".pi", "agent", "language-coach");
+
+type EngineApi = typeof EngineModule;
+let engineModule: EngineApi | null | undefined;
+
+async function loadEngine(): Promise<EngineApi | null> {
+	if (engineModule !== undefined) return engineModule;
+	try {
+		engineModule = (await import("@language-coach/engine")) as EngineApi;
+	} catch (error) {
+		engineModule = null;
+		// Load failures are cached; surface once, never break the session.
+		console.error(`[language-coach] engine unavailable, coach degrades to legacy behavior: ${String(error)}`);
+	}
+	return engineModule;
+}
+
+function debugLog(message: string): void {
+	if (process.env.GENTLE_PI_COACH_DEBUG) console.error(`[language-coach] ${message}`);
+}
 const MODES: readonly CoachMode[] = ["on", "productivity", "off"];
 let warnedAboutConfig = false;
 
@@ -59,13 +89,24 @@ function saveConfig(config: CoachConfig): void {
 	writeFileSync(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
-function buildOverlay(config: CoachConfig): string {
+/**
+ * Engine-derived overlay additions, computed once per turn (best effort):
+ * the closed pattern-id list the model may classify against, and the policy
+ * directive lines rendered from the learner model. Null when the engine is
+ * unavailable or fails — the overlay then degrades to today's shape.
+ */
+interface OverlayEngineContext {
+	patternIds: string[];
+	directives: string[];
+}
+
+function buildOverlay(config: CoachConfig, engineContext: OverlayEngineContext | null = null): string {
 	const { nativeLanguage: native, targetLanguage: target } = config;
 	const targetLower = target.toLowerCase();
 	const lines = [
 		`## Language Coach (native: ${native} → target: ${target})`,
 		`The user is a native ${native} speaker practicing professional ${target} for software engineering work.`,
-		`- Coach block: START every reply with a blockquote block (consecutive lines starting with "> ") exactly in this shape, then a horizontal rule (---) on its own line, then a blank line, then the main response:\n  > 🎓 "the user's original message, verbatim, natural-language part only (skip code, commands, paths, logs)"\n  >\n  > ✏️ "the corrected sentence in ${target}, with the changed words wrapped in **bold**". After the ✏️ line, when the correction reveals a generalizable pattern, add one more blockquote line: > 💡 <tip about the pattern, max 12 words> — only for reusable rules, never for typos or one-off mistakes.\n  For ${native}-language input, use > 🌐 on the first line and put the natural, professional ${target} translation on the ✏️ line instead of a correction. After the ✏️ line, if the translation contains 1–2 notable multi-word ${target} phrases worth keeping, add one more blockquote line per phrase: > 📚 "the phrase" — ${native} gloss (never for single words, never more than two). The coach block is an explicit exception to any reply-language rule. Never translate word-by-word.`,
+		`- Coach block: START every reply with a blockquote block (consecutive lines starting with "> ") exactly in this shape, then a horizontal rule (---) on its own line, then a blank line, then the main response:\n  > 🎓 "the user's original message, verbatim, natural-language part only (skip code, commands, paths, logs)"\n  >\n  > ✏️ "the corrected sentence in ${target}, with the changed words wrapped in **bold**". After the ✏️ line, when the correction reveals a generalizable pattern, add one more blockquote line: > 💡 <tip about the pattern, max 12 words> — only for reusable rules, never for typos or one-off mistakes.\n  For ${native}-language input, use > 🌐 on the first line and put the natural, professional ${target} translation on the ✏️ line instead of a correction. After the ✏️ line, if the translation contains 1–2 notable multi-word ${target} phrases worth keeping, add one more blockquote line per phrase: > 📚 "the phrase" — ${native} gloss (never for single words, never more than two). The coach block is an explicit exception to any reply-language rule. Never translate word-by-word.${engineContext ? classificationInstruction(engineContext) : ""}`,
 		`- If the user's ${target} message is already natural: keep the 🎓 echo line, and on the ✏️ line say it is correct and optionally give at most one more natural alternative, bolding the changed words. If no alternative adds value, say so briefly. Do not invent corrections.`,
 		`- If the user writes in any other language: reply in that language; no coaching.`,
 		`- Never translate or rewrite code, commands, identifiers, logs, file paths, commit messages, or delegated artifacts.`,
@@ -74,10 +115,76 @@ function buildOverlay(config: CoachConfig): string {
 		`- On noticing a recurring mistake, save one short line with mem_save (type "preference", topic_key "language-mistakes-${targetLower}").`,
 		`- When the user asks for a review or progress report: read the recent entries in ${LOG_PATH} and search memories with that topic_key, then summarize compactly: recurring mistakes, weekly correction volume, what improved, and 2-3 focus points for the coming period.`,
 	];
+	if (engineContext && engineContext.directives.length > 0) {
+		lines.push(
+			`- Learner-model directives (computed deterministically by the coach engine; follow them, never re-derive or re-score):\n${engineContext.directives.map((directive) => `  - ${directive}`).join("\n")}`,
+		);
+	}
 	if (config.mode === "productivity") {
 		lines.push(`(productivity mode: give only the coach block, with no alternatives or commentary.)`);
 	}
 	return lines.join("\n");
+}
+
+/**
+ * 🏷️ classification instruction appended to the coach-block bullet when the
+ * engine is available. Rides the existing coach block: the model classifies
+ * each real correction against the closed pattern list (plus active/due ids
+ * from the learner model); translations and already-correct replies never
+ * carry a 🏷️ line.
+ */
+function classificationInstruction(engineContext: OverlayEngineContext): string {
+	const ids = engineContext.patternIds.join(", ");
+	return ` If the ✏️ line actually changes words, add exactly ONE more blockquote line immediately after it: > 🏷️ pattern: <patternId> | severity: <low|medium|high>. Choose <patternId> ONLY from this list: ${ids} — or the literal uncategorized, and with uncategorized, when a clear reusable pattern exists, append | proposed: <2-4 words> at the end. Never add the 🏷️ line for 🌐 translation replies or when the sentence is already correct.`;
+}
+
+/**
+ * Compute the overlay's engine additions for one turn. Every step is guarded:
+ * any failure (missing engine, unreadable store, broken snapshot) returns
+ * null and the coach degrades to today's behavior.
+ */
+async function overlayEngineContext(config: CoachConfig): Promise<OverlayEngineContext | null> {
+	try {
+		const engine = await loadEngine();
+		if (!engine) return null;
+		const seed = { languagePair: { native: config.nativeLanguage, target: config.targetLanguage } };
+		const now = new Date();
+		const snapshot = await engine.readSnapshot(ENGINE_DATA_DIR);
+		let model: EngineModule.LearnerModel;
+		if (snapshot) {
+			model = snapshot;
+		} else {
+			// No snapshot: rebuild from the event log (createEmptyModel + fold
+			// when the log is empty or missing).
+			const store = engine.createEventStore(ENGINE_DATA_DIR);
+			const { events } = await store.readEvents();
+			model = engine.rebuildEvents(events, seed, now);
+		}
+		const context = engine.selectContext(model, engine.DEFAULT_CONTEXT_CAPS, now);
+		const candidateIds = [
+			...new Set([...context.dueMistakes.map((entry) => entry.profile.patternId), ...context.activePatternIds]),
+		];
+		const patternIds = [...new Set([...engine.listPatternIds(), ...candidateIds])].slice(
+			0,
+			engine.DEFAULT_CONTEXT_CAPS.maxDueMistakes + engine.DEFAULT_CONTEXT_CAPS.maxActivePatterns,
+		);
+		const directiveEntries: DirectiveEntry[] = candidateIds
+			.slice(0, engine.DEFAULT_CONTEXT_CAPS.maxDueMistakes)
+			.map((patternId) => {
+				const decision = engine.decideCorrection(model, { patternId }, now);
+				const profile = model.mistakes[patternId];
+				return {
+					patternId,
+					action: decision.action,
+					masteryPct: profile ? engine.toMasteryPercent(profile.mastery) : null,
+				};
+			});
+		const directives = buildPolicyDirectives(directiveEntries, engine.DEFAULT_CONTEXT_CAPS.maxDueMistakes);
+		return { patternIds, directives };
+	} catch (error) {
+		debugLog(`overlay engine context failed: ${String(error)}`);
+		return null;
+	}
 }
 
 function applyStatus(ctx: ExtensionContext, config: CoachConfig | null): void {
@@ -106,6 +213,243 @@ function coachBlockFrom(text: string): { block: string; kind: "correction" | "tr
 		}
 	}
 	return { block: blockLines.join("\n"), kind };
+}
+
+// ---------------------------------------------------------------------------
+// Learner Model v2 — classification protocol (pure helpers)
+//
+// The model classifies each real correction by riding one extra blockquote
+// line in the coach block: `> 🏷️ pattern: <id> | severity: <low|medium|high>`
+// (optionally ` | proposed: <2-4 words>` when the id is uncategorized). The
+// helpers below parse that line and render the policy directives; all event
+// creation/persistence goes through the engine (see recordCoachEvents).
+// ---------------------------------------------------------------------------
+
+/** Parsed 🏷️ classification line from a coach block. */
+export interface ClassificationLine {
+	patternId: string;
+	severity: "low" | "medium" | "high";
+	/** Present only for `uncategorized` lines with a `proposed:` segment. */
+	proposed?: string;
+}
+
+const CLASSIFICATION_LINE_RE =
+	/^> 🏷️\s+pattern:\s*(\S+)\s*\|\s*severity:\s*(low|medium|high)(?:\s*\|\s*proposed:\s*(\S.*?))?\s*$/u;
+
+/** Parse one 🏷️ blockquote line; null when it is not a valid classification line. */
+export function parseClassificationLine(line: string): ClassificationLine | null {
+	const match = CLASSIFICATION_LINE_RE.exec(line.trim());
+	if (!match) return null;
+	const proposed = match[3]?.trim();
+	return {
+		patternId: match[1],
+		severity: match[2] as ClassificationLine["severity"],
+		...(proposed ? { proposed } : {}),
+	};
+}
+
+/** Find the (single) 🏷️ classification line in a coach block; null when absent/unparseable. */
+export function classificationFromBlock(block: string): ClassificationLine | null {
+	for (const line of block.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith("> 🏷️")) continue;
+		const parsed = parseClassificationLine(trimmed);
+		if (parsed) return parsed;
+	}
+	return null;
+}
+
+function stripBold(text: string): string {
+	return text.replace(/\*\*/g, "");
+}
+
+/** Text after a blockquote marker (e.g. "> 🎓"), or null when the line is absent. */
+function blockLineText(block: string, marker: string): string | null {
+	for (const line of block.split("\n")) {
+		const trimmed = line.trim();
+		if (trimmed.startsWith(marker)) return trimmed.slice(marker.length).trim();
+	}
+	return null;
+}
+
+function stripWrappingQuotes(text: string): string {
+	const trimmed = text.trim();
+	return trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2 ? trimmed.slice(1, -1).trim() : trimmed;
+}
+
+function normalizeForCompare(text: string): string {
+	return stripBold(text)
+		.replace(/\s+/g, " ")
+		.trim()
+		.toLowerCase()
+		.replace(/[.!?…]+$/, "");
+}
+
+/** The learner's original sentence from the 🎓 line (wrapping quotes stripped). */
+function originalFromBlock(block: string): string {
+	const text = blockLineText(block, "> 🎓");
+	return text ? stripWrappingQuotes(text) : "";
+}
+
+/** The corrected sentence from the ✏️ line (bold markers and quotes stripped). */
+function correctedFromBlock(block: string): string {
+	const text = blockLineText(block, "> ✏️");
+	return text ? stripBold(stripWrappingQuotes(text)) : "";
+}
+
+/**
+ * Heuristic: a correction block "actually changes words" when the ✏️ line
+ * bolds at least one span AND the bold-stripped ✏️ text differs from the
+ * 🎓 original (normalized). Already-correct replies echo or affirm the
+ * original, so they compare equal or carry no bold. The overlay instructs
+ * the model to bold exactly the changed words.
+ */
+export function isWordChangingCorrection(block: string): boolean {
+	const original = originalFromBlock(block);
+	const corrected = blockLineText(block, "> ✏️");
+	if (!original || !corrected) return false;
+	if (!/\*\*[^*]+\*\*/.test(corrected)) return false;
+	return normalizeForCompare(original) !== normalizeForCompare(corrected);
+}
+
+/** One capped due/active pattern with its engine decision, ready to render. */
+export interface DirectiveEntry {
+	patternId: string;
+	action: EngineModule.CorrectionAction;
+	/** Integer mastery percent from the engine; null when no trusted profile exists. */
+	masteryPct: number | null;
+}
+
+/**
+ * Render the overlay's policy directive lines from engine decisions. Pure:
+ * the engine decides the action; this only renders compact prompt prose.
+ * Output is capped at `maxLines` (the adapter passes maxDueMistakes).
+ */
+export function buildPolicyDirectives(entries: readonly DirectiveEntry[], maxLines: number): string[] {
+	const lines: string[] = [];
+	for (const entry of entries) {
+		if (lines.length >= maxLines) break;
+		if (entry.masteryPct === null) {
+			lines.push(`Pattern "${entry.patternId}": unrecognized — offer a conservative hint.`);
+			continue;
+		}
+		switch (entry.action) {
+			case "ignore":
+				lines.push(`Pattern "${entry.patternId}": mastery ${entry.masteryPct}% — do not interrupt for this unless asked.`);
+				break;
+			case "correct":
+				lines.push(`Pattern "${entry.patternId}": mastery ${entry.masteryPct}% — actively teach this pattern when it appears.`);
+				break;
+			case "challenge":
+				lines.push(`Pattern "${entry.patternId}": mastery ${entry.masteryPct}% — regressed; challenge with a targeted drill when it appears.`);
+				break;
+			case "hint":
+				lines.push(`Pattern "${entry.patternId}": mastery ${entry.masteryPct}% — give a brief hint when it appears.`);
+				break;
+		}
+	}
+	return lines;
+}
+
+/** Map a typed engine factory error onto the closed analysis reason codes. */
+function rejectionFromFactoryError(
+	engine: EngineApi,
+	error: unknown,
+	timestamp: string,
+): EngineModule.AnalysisRejectedEvent {
+	const reason: EngineModule.AnalysisReasonCode = error instanceof engine.UnknownPatternError
+		? "unknown_pattern"
+		: "missing_fields";
+	const summary = error instanceof Error ? error.message : String(error);
+	return engine.makeAnalysisRejected({ reason, summary }, timestamp);
+}
+
+/**
+ * Record the engine events for one correction coach block (best effort):
+ *
+ * - word-changing correction + parseable 🏷️ + registry patternId
+ *     → `mistake_detected` (category/severity from the catalog) +
+ *       `mistake_corrected`, then the snapshot is refolded and persisted.
+ * - 🏷️ `uncategorized` + `proposed`  → pending-store append, NO mistake event
+ *     (closed-vocabulary rule); uncategorized without a proposal →
+ *     `analysis_rejected` (missing_fields).
+ * - missing/unparseable 🏷️, or a patternId outside the registry
+ *     → `analysis_rejected` (missing_fields / unknown_pattern).
+ * - translations and already-correct replies record nothing.
+ *
+ * Everything is wrapped so an engine failure can never alter the visible
+ * coach behavior; the legacy JSONL append above stays untouched.
+ */
+async function recordCoachEvents(config: CoachConfig, block: string): Promise<void> {
+	try {
+		const engine = await loadEngine();
+		if (!engine) return;
+		if (!isWordChangingCorrection(block)) return;
+		const timestamp = new Date().toISOString();
+		const classification = classificationFromBlock(block);
+		const events: EngineModule.LanguageEvent[] = [];
+		if (!classification) {
+			events.push(
+				engine.makeAnalysisRejected(
+					{ reason: "missing_fields", summary: `coach block has no parseable 🏷️ classification line: ${toOneLine(block, 160)}` },
+					timestamp,
+				),
+			);
+		} else if (classification.patternId === "uncategorized") {
+			if (!classification.proposed) {
+				events.push(
+					engine.makeAnalysisRejected(
+						{ reason: "missing_fields", summary: "uncategorized classification without a proposed pattern" },
+						timestamp,
+					),
+				);
+			} else {
+				try {
+					const result = engine.makeMistakeDetected({
+						verdict: "uncategorized",
+						proposedPattern: classification.proposed,
+						original: originalFromBlock(block),
+						timestamp,
+					});
+					if (result.kind === "pending-proposal") {
+						await engine.createPendingStore(ENGINE_DATA_DIR).append(result.proposal);
+					}
+				} catch (error) {
+					events.push(rejectionFromFactoryError(engine, error, timestamp));
+				}
+			}
+		} else {
+			try {
+				const result = engine.makeMistakeDetected({
+					verdict: "classified",
+					patternId: classification.patternId,
+					severity: classification.severity,
+					original: originalFromBlock(block),
+					corrected: correctedFromBlock(block),
+					timestamp,
+				});
+				if (result.kind === "event") {
+					events.push(result.event);
+					events.push(engine.makeMistakeCorrected({ patternId: classification.patternId, timestamp }));
+				}
+			} catch (error) {
+				events.push(rejectionFromFactoryError(engine, error, timestamp));
+			}
+		}
+		if (events.length > 0) {
+			const store = engine.createEventStore(ENGINE_DATA_DIR);
+			for (const event of events) await store.append(event);
+			// Cheapest correct persist: the model is a full fold of the log (no
+			// incremental fold exists), so refold once after appending.
+			await engine.rebuildSnapshot(
+				ENGINE_DATA_DIR,
+				{ languagePair: { native: config.nativeLanguage, target: config.targetLanguage } },
+				new Date(),
+			);
+		}
+	} catch (error) {
+		debugLog(`engine event recording failed: ${String(error)}`);
+	}
 }
 
 function textFromContent(content: unknown): string {
@@ -914,7 +1258,9 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 		const config = loadConfig();
 		if (!config || config.mode === "off") return;
 		const base = event.systemPrompt ?? "";
-		return { systemPrompt: `${base}\n\n${buildOverlay(config)}` };
+		// Best effort: null when the engine is unavailable/failing → today's overlay.
+		const engineContext = await overlayEngineContext(config);
+		return { systemPrompt: `${base}\n\n${buildOverlay(config, engineContext)}` };
 	});
 
 	pi.on("message_end", async (event, ctx) => {
@@ -936,6 +1282,9 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 			if (coach.kind === "correction") {
 				const tips = tipsFromBlock(coach.block);
 				if (tips.length > 0) appendTips(tips);
+				// Learner Model v2: record engine events for real corrections.
+				// Never throws; a failing engine degrades to legacy behavior.
+				await recordCoachEvents(config, coach.block);
 			}
 		}
 		const vocab = vocabFromText(text);
@@ -954,7 +1303,7 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 	});
 
 	pi.registerCommand("language", {
-		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, export a JSON snapshot, or set mode (on | productivity | off)",
+		description: "Language Coach: show status, run setup, view stats, review vocabulary, write a digest, export a JSON snapshot, rebuild the learner model, or set mode (on | productivity | off)",
 		handler: async (args, ctx) => {
 			const trimmed = (args ?? "").trim().toLowerCase();
 
@@ -1137,6 +1486,40 @@ export default function (pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env)
 					else console.log(done);
 				} catch (error) {
 					ctx.ui.notify(`Language Coach: failed to write export (${String(error)})`, "warning");
+				}
+				return;
+			}
+
+			if (trimmed === "rebuild") {
+				const config = loadConfig();
+				if (!config) {
+					ctx.ui.notify("Run /language first to configure your native and target languages.", "warning");
+					return;
+				}
+				const engine = await loadEngine();
+				if (!engine) {
+					ctx.ui.notify("Language Coach: engine unavailable; cannot rebuild the learner model.", "warning");
+					return;
+				}
+				try {
+					const snapshotPath = join(ENGINE_DATA_DIR, "learner.json");
+					if (existsSync(snapshotPath) && ctx.hasUI) {
+						const ok = await ctx.ui.confirm(
+							"Rebuild learner model?",
+							`This overwrites ${snapshotPath} with the model rebuilt from events.jsonl. Continue?`,
+						);
+						if (!ok) return;
+					}
+					const summary = await engine.rebuildSnapshot(
+						ENGINE_DATA_DIR,
+						{ languagePair: { native: config.nativeLanguage, target: config.targetLanguage } },
+						new Date(),
+					);
+					const done = `Learner model rebuilt: ${summary.eventCount} event${summary.eventCount === 1 ? "" : "s"}, ${summary.skippedLines} skipped line${summary.skippedLines === 1 ? "" : "s"} → ${snapshotPath}`;
+					if (ctx.hasUI) ctx.ui.notify(done, "info");
+					else console.log(done);
+				} catch (error) {
+					ctx.ui.notify(`Language Coach: rebuild failed (${String(error)})`, "warning");
 				}
 				return;
 			}
